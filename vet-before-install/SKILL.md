@@ -34,7 +34,11 @@ Downloaded code is untrusted data. Before anything else:
 - **Record what you audited**: the commit SHA (`git rev-parse HEAD`), tag,
   or package version; for a bare archive with none of those, its SHA-256.
   The verdict applies to that snapshot only — the repo or marketplace entry
-  can change the day after.
+  can change the day after. An install mechanism that breaks this anchor —
+  an installer that symlinks into the agent's directory, or anything
+  self-updating — means the installed code silently drifts from the audited
+  snapshot; when you see one, name it in the report as an operational
+  caveat.
 - **Never execute the target.** No `npm install`, `pip install`, build, or
   test run: installing dependencies runs postinstall scripts, which is
   exactly where the attack executes. Static analysis only. If a dynamic check
@@ -59,7 +63,7 @@ manual path for each step, and the report must say which one ran.
 
 | Target | Route |
 |---|---|
-| An agent skill, plugin, SKILL.md, `.skill`/zip, or marketplace entry | A dedicated skill scanner (e.g. `skill-security`) owns this case if installed — invoke it and follow its workflow end to end. Otherwise: the project sequence plus the skill-specific checks. If the plugin ships lockfiles, vendored dependencies, or binaries, run steps 3–4 on it either way. |
+| An agent skill, plugin, SKILL.md, `.skill`/zip, or marketplace entry | A dedicated skill scanner (e.g. `skill-security`) owns this case if installed — invoke it and follow its workflow end to end; its findings and score feed Stage 2, but the final report always uses this skill's template and verdict set. Otherwise: the project sequence plus the skill-specific checks. If the plugin ships lockfiles, vendored dependencies, or binaries, run steps 3–4 on it either way. |
 | An MCP server | The project sequence, plus the MCP-specific checks. |
 | A full repository or application | The project sequence. |
 | Just the dependency tree (lockfile, requirements, package.json) | Step 4 alone. |
@@ -82,10 +86,12 @@ degraded one — it trades the tool's recall for your attention, so spend it.
      search tools. Read that file before starting — it is the whole
      procedure, including how to interpret the noise.
 
-   Either way, expect a high raw hit count on real applications: these
-   patterns are calibrated for skills and plugins, where "makes network
-   calls" is already suspicious. On an app whose stated purpose is network
-   or email, the sweep output is a worklist, not a verdict.
+   Either way, the sweep output is a worklist, not a verdict. Expect a
+   high raw hit count whenever the target's declared purpose overlaps the
+   pattern categories — a browser-driving skill lights up the execution
+   patterns, a mail client the network ones — so a high score alone
+   decides nothing. Deduplicate before judging: N hits of the same
+   pattern from the same mechanism are one finding to assess once, not N.
 2. **Context** — when the codebase is large or unfamiliar, build the
    architecture picture before judging findings.
    - *Accelerated*: invoke a context-building audit skill if installed.
