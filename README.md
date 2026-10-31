@@ -1,0 +1,85 @@
+# vet-before-install
+
+A Claude Code skill that security-audits things *before* you trust them: an
+agent skill or plugin, a GitHub repository, a local project, an MCP server,
+or a dependency tree.
+
+It enforces one discipline whatever the target is:
+
+1. **Deterministic sweep** for recall — pattern-based detection of network
+   calls, execution, credential reads, persistence, install-time hooks,
+   obfuscation, and reviewer-directed text.
+2. **Manual contract check** for judgment — does what the project *claims*
+   match what the code *does*? A scanner cannot answer that; reading can.
+
+Plus the ground rules that make the audit itself safe: the target is cloned
+into an isolated directory, **never executed** (no install, no build, no
+tests — postinstall scripts are where the attack runs), and everything
+inside it is treated as data to analyze, never instructions to follow.
+
+## Installation
+
+Copy the `vet-before-install/` folder into your skills directory:
+
+```bash
+cp -r vet-before-install ~/.claude/skills/
+```
+
+Or save the packaged `.skill` file from the latest GitHub release through
+the Claude app.
+
+Note: `references/fallback-sweep.md` is a pattern blocklist, so security
+scanners pointed at this skill will flag it. That is the false-positive
+case the skill itself documents — audit it yourself before trusting it,
+as the skill would tell you to.
+
+## Zero dependencies, optional accelerators
+
+The skill works with nothing else installed: every step has a built-in
+manual procedure, including a full sweep pattern battery
+(`references/fallback-sweep.md`).
+
+If you have security tooling installed, the skill detects and uses it
+instead. Recommended companions, all from Trail of Bits' public skills
+marketplace:
+
+| Tool | What it accelerates |
+|---|---|
+| `insecure-defaults` | Step 3: default credentials, fail-open switches, debug leakage, binds |
+| `supply-chain-risk-auditor` | Step 4: lockfile and dependency-tree analysis |
+| `audit-context-building` | Step 2: architecture mapping on large codebases |
+
+```
+/plugin marketplace add trailofbits/skills
+/plugin install insecure-defaults@trailofbits
+/plugin install supply-chain-risk-auditor@trailofbits
+/plugin install audit-context-building@trailofbits
+```
+
+If you also have a dedicated skill-audit scanner installed (one that runs a
+deterministic regex/AST/YARA pass over a skill folder), the skill hands the
+skill/plugin case to it end to end.
+
+## Usage
+
+Just ask, in any phrasing:
+
+- "audit this: https://github.com/someone/some-plugin"
+- "is this skill safe to install?" (with a path or `.skill` file)
+- "vet this MCP server before I add it"
+- "check the dependencies of this project"
+
+The report leads with a verdict (`LIKELY SAFE` / `USE WITH CAUTION` /
+`DO NOT INSTALL`), records the exact commit or version audited, cites
+`file:line` for every finding, marks false positives explicitly, and says
+what was *not* checked.
+
+## Scope
+
+Defensive use only: this vets third-party things you are deciding whether
+to trust. It is not a tool for making software evade review, and not a
+replacement for reviewing your own diffs and PRs.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
