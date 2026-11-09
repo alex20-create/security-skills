@@ -141,6 +141,15 @@ class LoadCopyTests(unittest.TestCase):
             self.load(data)
         self.assertIn("https", str(cm.exception))
 
+    def test_file_url_only_through_test_hook(self):
+        data = sample_copy()
+        data["origins"][0]["url"] = "file:///tmp/upstream"
+        with self.assertRaises(RegistryError):
+            self.load(data)
+        registry._set_allow_file(True)
+        self.addCleanup(registry._set_allow_file, False)
+        self.assertEqual(self.load(data).origins[0].url, "file:///tmp/upstream")
+
     def test_rejects_unknown_kind(self):
         with self.assertRaises(RegistryError) as cm:
             self.load(sample_copy(kind="theme"))

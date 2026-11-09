@@ -113,7 +113,19 @@ def _sha(value, what):
     return value
 
 
+_ALLOW_FILE = False
+
+
+def _set_allow_file(flag):
+    """Test hook: accept file:// origin URLs. The command line never exposes it."""
+    global _ALLOW_FILE
+    _ALLOW_FILE = bool(flag)
+
+
 def _url(value, where):
+    if _ALLOW_FILE and isinstance(value, str) and value.startswith("file://") \
+            and not any(c.isspace() for c in value):
+        return value
     if not isinstance(value, str) or not value.startswith("https://") or any(c.isspace() for c in value):
         raise RegistryError("{}: url must be https:// with no whitespace, got {!r}".format(where, value))
     parts = urllib.parse.urlsplit(value)
