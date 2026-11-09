@@ -1,6 +1,6 @@
 ---
 name: vet-before-install
-description: "Security-audit anything before trusting or installing it: an agent skill or plugin, a GitHub repo, a local project, an MCP server, or its dependencies. Enforces a two-stage discipline — deterministic sweep for recall, then a manual contract check for judgment — and works with zero dependencies: it uses installed security tools when present (a skill scanner, insecure-defaults, supply-chain or context-building auditors) and falls back to built-in procedures otherwise, and offers any other installed security skills as optional extra passes. Use whenever the user says 'audit this', 'is this safe to install?', '¿es seguro?', passes a GitHub URL or local path asking for a security review, or wants to vet a skill, plugin, MCP server, or third-party project before installing or running it. Not for reviewing the user's own diffs or PRs — code review tools cover that."
+description: "Security-audit anything before trusting or installing it: an agent skill or plugin, a GitHub repo, a local project, an MCP server, or its dependencies. Enforces a two-stage discipline — deterministic sweep for recall, then a manual contract check for judgment — and works with zero dependencies: it uses installed security tools when present (a skill scanner, insecure-defaults, supply-chain or context-building auditors) and falls back to built-in procedures otherwise, and offers any other installed security skills as optional extra passes. Use whenever the user says 'audit this', 'is this safe to install?', '¿es seguro?', passes a GitHub URL or local path asking for a security review, or wants to vet a skill, plugin, MCP server, or third-party project before installing or running it. Not for reviewing the user's own diffs or PRs — code review tools cover that; an upstream update of something already vetted is in scope, audited by its delta from the pinned commit."
 ---
 
 # Vet before install
@@ -114,6 +114,7 @@ A supplementary tool runs under this skill's rules, not its own:
 | A full repository or application | The project sequence. |
 | Just the dependency tree (lockfile, requirements, package.json) | Step 4 alone. |
 | Just configuration / deployment defaults | Step 3 alone. |
+| An update to a target already vetted at a pinned commit | The update route below. |
 
 ### Project sequence (repository or application)
 
@@ -197,6 +198,39 @@ top of the project sequence:
   npm/pip packages with full dependency trees, launched automatically on
   every session.
 
+### Update route (a vetted target moved to a new commit)
+
+When the target was already audited at a pinned commit and the question is
+whether its newer commit is still safe, audit the delta instead of starting
+over — but audit it as hard as a new target, because an update is exactly
+where a trusted project turns hostile.
+
+- **Stage 0 records both ends**: the pinned (previously audited) SHA and the
+  new SHA. The verdict will apply to the new SHA only.
+- **The target is a snapshot, never a checkout**: the new and changed files
+  extracted into their own scratch directory, plus the diff between the two
+  commits. Read files from that snapshot or from the git objects; don't
+  check out the new commit, which would run its filters and could follow
+  its links.
+- **New files are audited in full**, through the same route their kind
+  would take as a fresh target (skill checks for a skill, MCP checks for a
+  server, and so on).
+- **Changed files are read in full**, with the changed hunks as the focus:
+  a harmless-looking hunk can wire up a function that was dormant before.
+- **Compare the contracts**: the `description:` and any other trigger text,
+  manifests (plugin, marketplace, MCP), hooks, network endpoints, and the
+  install mechanism. A change in any of them is a finding to judge even when
+  the code around it looks routine.
+- **Re-check the previous audit**: for every caveat it recorded, say whether
+  it is still present, fixed, or changed. New findings are listed apart.
+- **History matters**: if the pinned SHA is no longer an ancestor of the new
+  one (rewritten history, force-push), say so first; it is a finding on its
+  own.
+
+The report uses the normal template with two changes: the `Audited at:`
+line names both ends (`<old SHA>..<new SHA> (delta)`), and a
+`## Since the last audit` section lists the state of each previous caveat.
+
 ## Stage 2: the contract check (never skip)
 
 The sweep cannot judge intent; you can. For every surviving finding, open
@@ -240,13 +274,16 @@ Count confirmed findings by severity instead.
 **Verdict: <LIKELY SAFE | USE WITH CAUTION | DO NOT INSTALL>**
 Confirmed: <N critical, N high, N medium, N low; "none" if nothing survived>
   (from <M> raw sweep hits; <K> false positives, explained under Findings)
-Audited at: <commit SHA, tag, version, or archive SHA-256>
+Audited at: <commit SHA, tag, version, or archive SHA-256; for the update
+  route, <old SHA>..<new SHA> (delta)>
 Supplementary: <tools that ran; offered but declined; chosen but could not
   run, and why; omit if none found>
 
 <bottom line and the single most important reason.>
 
 ## What it claims vs. what it does
+## Since the last audit          <update route only: each previous caveat,
+                                  still present, fixed or changed>
 ## Findings            <confirmed ones; then false positives, grouped by
                         mechanism, and why each group is benign>
 ## What was not checked          <skipped steps, missing tools, and why>
