@@ -90,6 +90,13 @@ raw. The report also records the exact commit or version audited, cites
 `file:line` for every finding, marks false positives explicitly, and says
 what was *not* checked.
 
+When something you already vetted publishes a new commit, ask for the update
+to be audited ("re-vet this update from `<old SHA>` to `<new SHA>`"). The
+skill audits the delta as hard as a new target: new files in full, changed
+files read whole with the changes as focus, contracts and install mechanism
+compared, and every caveat of the previous audit marked as still present,
+fixed or changed. The verdict applies to the new commit only.
+
 ## Scope
 
 Defensive use only: this vets third-party things you are deciding whether
