@@ -1,4 +1,14 @@
-# vet-before-install
+# security-skills
+
+Security skills for Claude Code. This repository was called
+`vet-before-install-skill` until it grew a second skill; old links redirect
+here.
+
+- **vet-before-install**: audit third-party code before you trust it (below).
+- **fork-keeper**: keep your own patched copies of third-party skills and
+  repos pinned to the audited commit (coming next).
+
+## vet-before-install
 
 A Claude Code skill that security-audits things *before* you trust them: an
 agent skill or plugin, a GitHub repository, a local project, an MCP server,
