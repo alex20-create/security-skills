@@ -68,6 +68,11 @@ only what you pick. Extra tools run read-only on the isolated copy, never
 install, build, run or edit the target, and their findings go through the
 same contract check; the verdict stays this skill's.
 
+Standalone scanner CLIs on your `PATH` (such as NVIDIA's SkillSpector) are
+offered the same way. They run static-only, never in a mode that sends the
+target's files to an LLM provider unless you ask for it, and never with
+suppression files shipped inside the target.
+
 ## Usage
 
 Just ask, in any phrasing:
