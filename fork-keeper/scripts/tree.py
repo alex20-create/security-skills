@@ -86,5 +86,11 @@ def build_base(parts, dest):
         if root not in target.resolve().parents:
             raise TreeError("destination {!r} escapes the base folder".format(dst))
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(git.cat_blob(blob))
+        data = git.cat_blob(blob)
+        try:
+            with open(target, "xb") as f:
+                f.write(data)
+        except FileExistsError:
+            raise TreeError("{!r} already exists in the base folder; two paths may name one file on this "
+                            "system (case, short 8.3 names)".format(dst))
     return owners

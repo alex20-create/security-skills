@@ -2,8 +2,10 @@
 
 The work repo gets the old base, then the new base on top (so every blob a
 patch names is present for ``--3way``), then one commit per applied patch.
-Progress lives in ``.git/fk-progress.json``, inside git's own folder, so it is
-never committed and never part of the result tree.
+Every commit stages exactly the files ``patches.walk_files`` lists, so no
+``.gitignore`` can hide a file and no system file (desktop.ini) can slip in.
+The work repo is offline. Progress lives in ``.git/fk-progress.json``, inside
+git's own folder, so it is never committed and never part of the result.
 
 Statuses: ``clean`` (applied without three-way), ``merged`` (three-way, no
 conflict left), ``conflict`` (stopped here; markers or a file-level clash),
@@ -18,7 +20,8 @@ import patches
 from gitsafe import GitError, SafeGit
 
 _PROGRESS = "fk-progress.json"
-_MARKER = b"<<<<<<< "
+_OPEN = b"<<<<<<< "
+_CLOSE = b">>>>>>> "
 
 
 class ReapplyError(Exception):
@@ -61,15 +64,34 @@ def _from_json(d):
 
 # -- applying ---------------------------------------------------------------
 
-def _markers(work, paths):
+def _git(work):
+    return SafeGit(work, offline=True)
+
+
+def _files(work, state):
+    return patches.walk_files(work, state.get("ignore", []))
+
+
+def _commit(g, work, state, message):
+    return g.commit_all(message, _files(work, state))
+
+
+def _marker_count(data):
+    return sum(1 for l in data.split(b"\n") if l.startswith((_OPEN, _CLOSE)))
+
+
+def _markers(g, work, paths):
+    """Conflict-start lines git wrote: only files with more marker lines than their committed version."""
+    head = {p: b for _, b, p in g.ls_tree("HEAD", "")}
     out = []
     for p in paths:
         f = Path(work) / p
         if not f.is_file():
             continue
-        for n, line in enumerate(f.read_bytes().split(b"\n"), 1):
-            if line.startswith(_MARKER):
-                out.append((p, n))
+        data = f.read_bytes()
+        baseline = _marker_count(g.cat_blob(head[p])) if p in head else 0
+        if _marker_count(data) > baseline:
+            out += [(p, n) for n, line in enumerate(data.split(b"\n"), 1) if line.startswith(_OPEN)]
     return out
 
 
@@ -113,7 +135,7 @@ def _apply(g, work, patch):
         return PatchResult(name, "merged", detail=detail)
     unmerged = sorted({p.decode("utf-8", "replace") for p in
                        g.run("diff", "--name-only", "--diff-filter=U", "-z").split(b"\x00") if p})
-    found = _markers(work, unmerged)
+    found = _markers(g, work, unmerged)
     if found:
         return PatchResult(name, "conflict", found, detail)
     return PatchResult(name, "conflict", [(p, 0) for p in (unmerged or _file_level_clash(g, diff))], detail)
@@ -129,34 +151,42 @@ def _run(g, work, series, state, start_at):
             state["conflict"] = i
             _save(work, state)
             return results + [PatchResult(Path(p).name, "pending") for p in series[i + 1:]]
-        state["commits"].append(g.commit_all("fk: " + r.name))
+        state["commits"].append(_commit(g, work, state, "fk: " + r.name))
     state["results"] = [_to_json(x) for x in results]
     state.pop("conflict", None)
     _save(work, state)
     return results
 
 
-def _git(work):
-    return SafeGit(work)
-
-
-def start(old_base, new_base, series, work):
+def start(old_base, new_base, series, work, ignore=()):
     work = Path(work)
     if work.exists() and any(work.iterdir()):
         raise ReapplyError("work folder {} is not empty".format(work))
-    g = SafeGit.init(work, bare=False)
+    g = SafeGit.init(work, bare=False, offline=True)
     g.run("config", "core.fileMode", "false")
-    patches.copy_tree(old_base, work, [])
-    g.commit_all("fk: old base")
+    state = {"series": [Path(p).name for p in series], "ignore": list(ignore), "base": None,
+             "commits": [], "results": []}
+    patches.copy_tree(old_base, work, ignore)
+    _commit(g, work, state, "fk: old base")
     patches.clear_work_tree(work)
-    patches.copy_tree(new_base, work, [])
-    base = g.commit_all("fk: new base")
-    state = {"series": [Path(p).name for p in series], "base": base, "commits": [], "results": []}
+    patches.copy_tree(new_base, work, ignore)
+    state["base"] = _commit(g, work, state, "fk: new base")
     return _run(g, work, list(series), state, 0)
 
 
-def resume(work, series):
-    """Commit the resolved conflicting patch and go on; report the conflict again if markers remain."""
+def _staged_differs_from_head(g, work, state):
+    g.stage_exactly(_files(work, state))
+    g.run("diff", "--cached", "--quiet", "HEAD", ok_codes=(0, 1))
+    return g.last_returncode == 1
+
+
+def resume(work, series, accept_empty=False):
+    """Commit the resolved conflicting patch and go on.
+
+    The conflict stays open while git's markers remain, or while the work tree
+    is unchanged since the conflict, unless ``accept_empty`` says the patch's
+    change is to be dropped.
+    """
     work = Path(work)
     state = _load(work)
     names = [Path(p).name for p in series]
@@ -167,13 +197,20 @@ def resume(work, series):
         raise ReapplyError("no conflict is waiting to be resolved")
     g = _git(work)
     stuck = _from_json(state["results"][i])
-    left = _markers(work, [p for p, _ in stuck.conflicts])
-    if left:
-        stuck.conflicts = left
+
+    def still_open(conflicts, detail):
+        stuck.conflicts, stuck.detail = conflicts, detail
         state["results"][i] = _to_json(stuck)
         _save(work, state)
         return [_from_json(d) for d in state["results"]] + [PatchResult(n, "pending") for n in names[i + 1:]]
-    state["commits"].append(g.commit_all("fk: " + stuck.name + " (resolved)"))
+
+    left = _markers(g, work, [p for p, _ in stuck.conflicts])
+    if left:
+        return still_open(left, "conflict markers are still in the files")
+    if not _staged_differs_from_head(g, work, state) and not accept_empty:
+        return still_open(stuck.conflicts, "nothing changed since the conflict; resolve it, or accept "
+                                           "an empty result to drop this patch's change")
+    state["commits"].append(_commit(g, work, state, "fk: " + stuck.name + " (resolved)"))
     state["results"][i] = _to_json(PatchResult(stuck.name, "merged", [], stuck.detail))
     state.pop("conflict", None)
     return _run(g, work, list(series), state, i + 1)
@@ -185,7 +222,7 @@ def _finished(work):
     if "conflict" in state or len(done) != len(state["series"]) \
             or any(d["status"] not in ("clean", "merged") for d in done):
         raise ReapplyError("the re-apply in {} is not finished".format(work))
-    if _git(work).run("status", "--porcelain", "--untracked-files=all").strip():
+    if _staged_differs_from_head(_git(work), work, state):
         raise ReapplyError("{} has changes that were not committed by fork-keeper".format(work))
     return state
 

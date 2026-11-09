@@ -38,6 +38,12 @@ class Dep3:
         lines = self.description.split("\n") if isinstance(self.description, str) else [""]
         if not lines[0].strip():
             raise PatchError("a patch description needs a summary on its first line")
+        if "\r" in self.description:
+            raise PatchError("a patch description must not contain carriage returns")
+        for l in lines[1:]:
+            if l.strip() == "." or (l and not l.strip()):
+                raise PatchError("description line {!r} would not survive a round trip; "
+                                 "use an empty line or real text".format(l))
         if not isinstance(self.applies_to, str) or not _APPLIES_TO.fullmatch(self.applies_to):
             raise PatchError("Applies-To must be <origin id>@<full SHA>, got {!r}".format(self.applies_to))
         try:
@@ -98,7 +104,10 @@ def parse(patch):
 # -- trees ------------------------------------------------------------------
 
 def _ignored(name, is_dir, patterns):
+    """Case-insensitive, because Windows treats Desktop.ini and desktop.ini as one file."""
+    name = name.casefold()
     for p in patterns:
+        p = p.casefold()
         if p.endswith("/"):
             if is_dir and fnmatch.fnmatchcase(name, p[:-1]):
                 return True
@@ -146,7 +155,16 @@ def is_text(data):
     return b"\x00" not in data[:_TEXT_PROBE]
 
 
+def eol_style(data):
+    """"lf", "crlf", "mixed" or "none" (no line break at all)."""
+    lf, crlf = data.count(b"\n"), data.count(b"\r\n")
+    if lf == 0:
+        return "none"
+    return "crlf" if crlf == lf else "lf" if crlf == 0 else "mixed"
+
+
 def eol_mismatches(base, copy):
+    """Text files present in both whose line-ending style differs, in either direction."""
     base, copy = Path(base), Path(copy)
     out = []
     for rel in walk_files(copy):
@@ -154,8 +172,10 @@ def eol_mismatches(base, copy):
         if not b.is_file():
             continue
         c_data, b_data = (copy / rel).read_bytes(), b.read_bytes()
-        if is_text(c_data) and is_text(b_data) and b"\r\n" in c_data and b"\r\n" not in b_data:
-            out.append(rel)
+        if is_text(c_data) and is_text(b_data):
+            styles = {eol_style(c_data), eol_style(b_data)} - {"none"}
+            if len(styles) > 1:
+                out.append(rel)
     return out
 
 
@@ -174,12 +194,12 @@ def generate(base, copy, work, ignore):
     work = Path(work)
     if work.exists() and any(work.iterdir()):
         raise PatchError("work folder {} is not empty".format(work))
-    g = SafeGit.init(work, bare=False)
+    g = SafeGit.init(work, bare=False, offline=True)
     g.run("config", "core.fileMode", "false")
     copy_tree(base, work, ignore)
-    g.commit_all("base")
+    g.commit_all("base", walk_files(work, ignore))
     clear_work_tree(work)
     copy_tree(copy, work, ignore)
-    g.run("add", "-A")
+    g.stage_exactly(walk_files(work, ignore))
     return g.run("diff", "--cached", "--binary", "-M", "--full-index", "--no-ext-diff", "--no-textconv",
                  "--no-color")

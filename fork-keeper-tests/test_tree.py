@@ -120,6 +120,13 @@ class TreeTests(unittest.TestCase):
             tree.build_base([("upstream", self.git, self.sha, [MapEntry("LICENSE", "../outside")])], self.dest)
         self.assertFalse((self.root / "outside").exists())
 
+    def test_never_overwrites_a_file(self):
+        (self.dest).mkdir(parents=True)
+        (self.dest / "LICENSE").write_bytes(b"already here\n")
+        with self.assertRaises(TreeError):
+            tree.build_base([("upstream", self.git, self.sha, self.entries)], self.dest)
+        self.assertEqual((self.dest / "LICENSE").read_bytes(), b"already here\n")
+
     def test_unsafe_component_names(self):
         for bad in ("a\\b", "..", "x/../y", ".git/config", "GIT~1/hooks", "x:y", "trail.", "trail ", "CON", "nul.txt", "com1"):
             with self.subTest(path=bad):

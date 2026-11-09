@@ -29,7 +29,8 @@ _NAME = re.compile(r"{0}(/{0})*".format(_COMPONENT))
 _SCRATCH = None
 
 # Highest-precedence attributes: they beat anything in the fetched trees.
-NEUTRAL_ATTRIBUTES = "* -export-ignore -export-subst -text -eol -ident !diff !merge !filter !working-tree-encoding !crlf\n"
+NEUTRAL_ATTRIBUTES = ("* -export-ignore -export-subst -text -eol -ident !diff !merge !filter "
+                      "!working-tree-encoding !crlf conflict-marker-size=7\n")
 
 _FSCK = ("hasDotgit", "hasDotdot", "hasDot")
 _DROP_ENV = ("SSLKEYLOGFILE",)
@@ -139,6 +140,8 @@ class SafeGit:
         flags = [
             "protocol.allow=never",
             "core.hooksPath=" + (_scratch() / "hooks").as_posix(),
+            "core.excludesFile=" + (_scratch() / "empty.gitconfig").as_posix(),
+            "core.attributesFile=" + (_scratch() / "empty.gitconfig").as_posix(),
             "core.symlinks=false",
             "core.autocrlf=false",
             "core.safecrlf=false",
@@ -287,7 +290,18 @@ class SafeGit:
 
     # -- work repos ---------------------------------------------------------
 
-    def commit_all(self, message):
-        self.run("add", "-A")
+    def stage_exactly(self, files):
+        """Make the index hold exactly ``files`` (relative POSIX paths), whatever any ignore rule says."""
+        self.run("rm", "-r", "--cached", "-q", "--ignore-unmatch", "--", ".")
+        if files:
+            self.run("add", "--force", "--pathspec-from-file=-", "--pathspec-file-nul",
+                     input=b"\x00".join(f.encode("utf-8") for f in files))
+
+    def commit_all(self, message, files=None):
+        """Commit the work tree: every file (ignore rules overridden), or exactly ``files``."""
+        if files is None:
+            self.run("add", "-A", "--force")
+        else:
+            self.stage_exactly(files)
         self.run("commit", "-q", "--allow-empty", "--no-verify", "-m", message)
         return self.rev_parse("HEAD")

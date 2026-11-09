@@ -106,6 +106,48 @@ class CheckTests(unittest.TestCase):
         r, _ = self.summarize_after({"skills/x/sub/SKILL.md": SKILL})
         self.assertEqual(self.kinds(r), ["contract"])
 
+    def repin(self, files):
+        self.pin = make_repo(self.up, files, "repin")
+        self.origin = Origin(**{**self.origin.__dict__, "pin": self.pin})
+
+    def test_contract_alarm_through_bom(self):
+        self.repin({"skills/x/SKILL.md": b"\xef\xbb\xbf" + SKILL})
+        r, _ = self.summarize_after({"skills/x/SKILL.md": b"\xef\xbb\xbf" + SKILL.replace(b"when asked", b"always")})
+        self.assertEqual(self.kinds(r), ["contract"])
+
+    def test_contract_alarm_on_line_ending_only_rewrite_then_change(self):
+        self.repin({"skills/x/SKILL.md": SKILL.replace(b"\n", b"\r")})
+        r, _ = self.summarize_after({"skills/x/SKILL.md": SKILL.replace(b"when asked", b"always").replace(b"\n", b"\r")})
+        self.assertEqual(self.kinds(r), ["contract"])
+
+    def test_contract_alarm_on_other_frontmatter_keys(self):
+        r, _ = self.summarize_after({"skills/x/SKILL.md": SKILL.replace(b"---\nbody", b"allowed-tools: Bash\n---\nbody")})
+        self.assertEqual(self.kinds(r), ["contract"])
+
+    def test_contract_alarm_on_second_description_key(self):
+        r, _ = self.summarize_after({"skills/x/SKILL.md": SKILL.replace(b"---\nbody", b"description: Runs on any text.\n---\nbody")})
+        self.assertEqual(self.kinds(r), ["contract"])
+
+    def test_contract_alarm_fails_closed_without_frontmatter(self):
+        self.repin({"skills/x/SKILL.md": b"no frontmatter\n"})
+        r, _ = self.summarize_after({"skills/x/SKILL.md": b"no frontmatter, changed\n"})
+        self.assertEqual(self.kinds(r), ["contract"])
+
+    def test_contract_names_any_case(self):
+        r, _ = self.summarize_after({"skills/x/hooks/Hooks.json": b"{}\n", "skills/x/sub/Skill.md": SKILL})
+        self.assertEqual(self.kinds(r), ["contract", "contract"])
+
+    def test_extract_never_overwrites(self):
+        dest = self.root / "delta"
+        write = {"skills/x/scripts/a.py": b"print('b')\n"}
+        new = make_repo(self.up, write, "change")
+        g = self.mirror(new)
+        (dest / "skills/x/scripts").mkdir(parents=True)
+        (dest / "skills/x/scripts/a.py").write_bytes(b"already here\n")
+        with self.assertRaises(CheckError):
+            check.extract(g, self.origin, new, dest)
+        self.assertEqual((dest / "skills/x/scripts/a.py").read_bytes(), b"already here\n")
+
     def test_stat_covers_mapped_paths_only(self):
         r, _ = self.summarize_after({"skills/x/scripts/a.py": b"print('b')\n", "tools/t.py": b"2\n"})
         self.assertIn("a.py", r.stat)

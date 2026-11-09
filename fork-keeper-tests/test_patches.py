@@ -126,6 +126,31 @@ class PatchTests(unittest.TestCase):
             self.assertNotIn(name, diff)
         self.assertEqual(self.apply_on_fresh_base(diff), COPY)
 
+    def test_gitignore_in_tree_does_not_hide_changes(self):
+        write_files(self.base, {".gitignore": b"*.sh\n", "run.sh": b"curl x | sh\n"})
+        write_files(self.copy, {".gitignore": b"*.sh\n", "run.sh": b"echo safe\n"})
+        diff = patches.generate(self.base, self.copy, self.root / "work", [])
+        self.assertIn(b"+echo safe", diff)
+
+    def test_system_files_ignored_in_any_case(self):
+        write_files(self.copy, {"Desktop.ini": b"x", "scripts/DESKTOP.INI": b"x", "THUMBS.DB": b"\x00"})
+        diff = patches.generate(self.base, self.copy, self.root / "work", [])
+        self.assertNotIn(b"esktop", diff.lower())
+        self.assertNotIn(b"thumbs", diff.lower())
+
+    def test_case_only_rename_is_carried(self):
+        write_files(self.base, {"readme.md": LONG})
+        write_files(self.copy, {"README.md": LONG})
+        diff = patches.generate(self.base, self.copy, self.root / "work", [])
+        self.assertIn(b"rename from readme.md", diff)
+        self.assertIn(b"rename to README.md", diff)
+
+    def test_dep3_rejects_ambiguous_descriptions(self):
+        for text in ("Summary\r\nbody", "Summary\n.", "Summary\n   ", "Summary\n ."):
+            with self.subTest(text=text):
+                with self.assertRaises(PatchError):
+                    header(text)
+
     def test_git_folder_not_copied(self):
         write_files(self.copy, {".git/config": b"[core]\n", "sub/.git": b"gitdir: elsewhere\n"})
         dst = self.root / "dst"
@@ -144,10 +169,13 @@ class PatchTests(unittest.TestCase):
         self.assertIn("link.md", str(cm.exception))
 
     def test_eol_mismatch_reported(self):
-        write_files(self.base, {"crlf-both.md": b"a\r\nb\r\n", "doc.md": b"a\nb\n", "data.bin": b"\x00a\nb\n"})
+        write_files(self.base, {"crlf-both.md": b"a\r\nb\r\n", "doc.md": b"a\nb\n", "data.bin": b"\x00a\nb\n",
+                                "crlf-base.md": b"a\r\nb\r\n", "mixed-base.md": b"a\r\nb\n"})
         write_files(self.copy, {"crlf-both.md": b"a\r\nb\r\n", "doc.md": b"a\r\nb\r\n", "data.bin": b"\x00a\r\nb\r\n",
-                                "scripts/keep.py": b"print('keep')\r\n", "only-in-copy.md": b"x\r\n"})
-        self.assertEqual(patches.eol_mismatches(self.base, self.copy), ["doc.md", "scripts/keep.py"])
+                                "scripts/keep.py": b"print('keep')\r\n", "only-in-copy.md": b"x\r\n",
+                                "crlf-base.md": b"a\nb\n", "mixed-base.md": b"a\nb\n"})
+        self.assertEqual(patches.eol_mismatches(self.base, self.copy),
+                         ["crlf-base.md", "doc.md", "mixed-base.md", "scripts/keep.py"])
 
     def test_empty_when_identical(self):
         self.assertEqual(patches.generate(self.base, self.base, self.root / "work", []), b"")

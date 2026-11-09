@@ -151,9 +151,77 @@ class ReapplyTests(unittest.TestCase):
 
     def test_progress_never_in_result(self):
         reapply.start(self.old, self.new_base({}), self.series, self.work)
-        self.assertNotIn(".fk-progress.json", read_tree(reapply.result_tree(self.work)))
-        files = git(self.work, "ls-files").decode().split()
-        self.assertNotIn(".fk-progress.json", files)
+        names = list(read_tree(reapply.result_tree(self.work))) + git(self.work, "ls-files").decode().split()
+        self.assertFalse([n for n in names if "progress" in n], names)
+
+    def test_work_repo_is_offline(self):
+        reapply.start(self.old, self.new_base({}), self.series, self.work)
+        self.assertTrue(reapply._git(self.work).offline)
+
+    def test_gitignore_in_new_base_hides_nothing(self):
+        new = self.new_base({".gitignore": b"scripts/\n"})
+        got = reapply.start(self.old, new, self.series, self.work)
+        self.assertEqual([r.status for r in got], ["clean", "clean"])
+        self.assertEqual(read_tree(reapply.result_tree(self.work))["scripts/a.py"], COPY2["scripts/a.py"])
+
+    def test_conflict_marker_size_attribute_ignored(self):
+        new = self.new_base({".gitattributes": b"* conflict-marker-size=9\n",
+                             "SKILL.md": skill(l5=b"line 5 upstream\n")})
+        got = reapply.start(self.old, new, self.series, self.work)
+        self.assertEqual(got[0].conflicts, [("SKILL.md", 5)])
+        again = reapply.resume(self.work, self.series)
+        self.assertEqual(again[0].status, "conflict")
+
+    def test_upstream_marker_lines_do_not_block_resume(self):
+        new = self.new_base({"README.md": b"<<<<<<< this line is upstream text\n",
+                             "SKILL.md": skill(l5=b"line 5 upstream\n")})
+        reapply.start(self.old, new, self.series, self.work)
+        (self.work / "SKILL.md").write_bytes(skill(l5=b"line 5 resolved\n"))
+        got = reapply.resume(self.work, self.series)
+        self.assertEqual([r.status for r in got], ["merged", "clean"])
+
+    def test_resume_file_level_clash_needs_a_change(self):
+        new = self.new_base({"SKILL.md": None})
+        reapply.start(self.old, new, self.series, self.work)
+        got = reapply.resume(self.work, self.series)
+        self.assertEqual(got[0].status, "conflict")
+        (self.work / "SKILL.md").write_bytes(COPY1["SKILL.md"])
+        got = reapply.resume(self.work, self.series)
+        self.assertEqual([r.status for r in got], ["merged", "clean"])
+        self.assertEqual(read_tree(reapply.result_tree(self.work))["SKILL.md"], COPY1["SKILL.md"])
+
+    def test_resume_can_accept_an_empty_patch(self):
+        new = self.new_base({"SKILL.md": None})
+        reapply.start(self.old, new, self.series, self.work)
+        got = reapply.resume(self.work, self.series, accept_empty=True)
+        self.assertEqual([r.status for r in got], ["merged", "clean"])
+        self.assertEqual(reapply.per_patch_diffs(self.work)[0], b"")
+
+    def test_system_files_never_reach_a_resumed_patch(self):
+        new = self.new_base({"SKILL.md": skill(l5=b"line 5 upstream\n")})
+        reapply.start(self.old, new, self.series, self.work)
+        (self.work / "SKILL.md").write_bytes(skill(l5=b"line 5 resolved\n"))
+        (self.work / "Desktop.ini").write_bytes(b"[.ShellClassInfo]\r\n")
+        reapply.resume(self.work, self.series)
+        self.assertNotIn(b"esktop.ini", b"".join(reapply.per_patch_diffs(self.work)))
+
+    def test_per_patch_diffs_with_renames_deletions_and_binaries(self):
+        c3 = self.root / "c3"
+        files = {k: v for k, v in COPY1.items() if k != "README.md"}
+        files["scripts/b.py"] = files.pop("scripts/a.py")
+        files["assets/x.bin"] = bytes(range(256))
+        write_files(c3, files)
+        diff = patches.generate(self.old, c3, self.root / "gen-rich", [])
+        p = self.root / "patches" / "01-rich.patch"
+        p.write_bytes(patches.render(Dep3("Rich", "upstream@" + SHA_B, "2026-11-09"), diff))
+        new = self.new_base({"SKILL.md": skill(l7=b"line 7 upstream\n")})
+        got = reapply.start(self.old, new, [p], self.work)
+        self.assertEqual(got[0].status, "merged")
+        target = self.root / "target"
+        make_repo(target, read_tree(new), "new base")
+        for d in reapply.per_patch_diffs(self.work):
+            git(target, "apply", input=d)
+        self.assertEqual(read_tree(target), read_tree(reapply.result_tree(self.work)))
 
 
 if __name__ == "__main__":

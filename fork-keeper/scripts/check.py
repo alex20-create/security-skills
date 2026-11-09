@@ -48,24 +48,20 @@ def in_map(path, entries):
     return any(e.src == "." or path == e.src or path.startswith(e.src + "/") for e in entries)
 
 
-def _description(data):
-    """The raw ``description:`` block of a SKILL.md frontmatter, continuation lines included."""
-    text = data.decode("utf-8", "replace").replace("\r\n", "\n")
+def _frontmatter(data):
+    """The whole frontmatter of a SKILL.md, normalised for BOM and line endings; None if there is none.
+
+    The whole block is compared, not only ``description:``: tools, hooks, model
+    and invocation keys change what runs too, and a second ``description:``
+    key would be read by a last-wins loader.
+    """
+    text = data.decode("utf-8-sig", "replace").replace("\r\n", "\n").replace("\r", "\n")
     if not text.startswith("---\n"):
         return None
     end = text.find("\n---", 3)
     if end < 0:
         return None
-    block = None
-    for line in text[4:end].split("\n"):
-        if block is None:
-            if line.startswith("description:"):
-                block = [line]
-        elif line.startswith((" ", "\t")) or line == "":
-            block.append(line)
-        else:
-            break
-    return "\n".join(block).rstrip() if block else None
+    return "\n".join(l.rstrip() for l in text[4:end].split("\n")).strip("\n")
 
 
 def _blob_at(git, commit, path):
@@ -81,17 +77,21 @@ def _alarms_for(git, old, new, status, path):
     out = []
     if any(fnmatch.fnmatchcase(low, p) for p in _LICENSE_NAMES):
         out.append(Alarm("license", "{} {}: licence file changed; check the terms still allow the copy".format(status, path)))
-    if name == "SKILL.md":
+    if low == "skill.md":
         if status in ("A", "D"):
             out.append(Alarm("contract", "{} {}: a skill file was {}".format(
                 status, path, "added" if status == "A" else "removed")))
         else:
             before, after = _blob_at(git, old, path), _blob_at(git, new, path)
-            d_old = _description(git.cat_blob(before)) if before else None
-            d_new = _description(git.cat_blob(after)) if after else None
-            if d_old != d_new:
-                out.append(Alarm("contract", "{} {}: the description: line changed, so when the skill triggers may have changed".format(status, path)))
-    elif name in _MANIFESTS:
+            f_old = _frontmatter(git.cat_blob(before)) if before else None
+            f_new = _frontmatter(git.cat_blob(after)) if after else None
+            if f_old is None or f_new is None:
+                out.append(Alarm("contract", "{} {}: the frontmatter could not be read, so the change to when "
+                                             "and how the skill runs cannot be ruled out".format(status, path)))
+            elif f_old != f_new:
+                out.append(Alarm("contract", "{} {}: the frontmatter changed (description, tools or other keys), "
+                                             "so when or how the skill runs may have changed".format(status, path)))
+    elif low in _MANIFESTS:
         out.append(Alarm("contract", "{} {}: a plugin, hook or MCP manifest changed".format(status, path)))
     return out
 
@@ -138,7 +138,13 @@ def extract(git, origin, new, dest):
         if root not in target.resolve().parents:
             raise CheckError("upstream path {!r} escapes the extraction folder".format(p))
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(git.cat_blob(entries[p][1]))
+        data = git.cat_blob(entries[p][1])
+        try:
+            with open(target, "xb") as f:
+                f.write(data)
+        except FileExistsError:
+            raise CheckError("{!r} already exists in the extraction folder; two upstream paths may name one "
+                             "file on this system (case, short 8.3 names), so neither is trusted".format(p))
     return wanted
 
 

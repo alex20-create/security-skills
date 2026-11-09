@@ -333,6 +333,37 @@ class IsolationTests(unittest.TestCase):
         g.run("checkout", "--", "f.txt")
         self.assertEqual((work / "f.txt").read_bytes(), b"a\nb\n")
 
+    def test_default_ignore_and_attributes_files_not_used(self):
+        xdg = self.home / ".config" / "git"
+        xdg.mkdir(parents=True)
+        (xdg / "ignore").write_text("*.sh\n")
+        (xdg / "attributes").write_text("*.txt fkprobe\n")
+        control = self.root / "control"
+        control.mkdir()
+        self.plain_git(control, "init", "-q")
+        (control / "a.sh").write_bytes(b"x\n")
+        self.assertEqual(self.plain_git(control, "ls-files", "--others", "--exclude-standard").stdout, b"",
+                         "control: the default ignore file should apply under plain git")
+        work = self.root / "work"
+        g = SafeGit.init(work, bare=False)
+        (work / "a.sh").write_bytes(b"x\n")
+        self.assertEqual(g.run("ls-files", "--others", "--exclude-standard").strip(), b"a.sh")
+        self.assertIn(b"unspecified", g.run("check-attr", "fkprobe", "--", "f.txt"))
+
+    def test_commit_all_with_file_list_stages_exactly_those(self):
+        work = self.root / "work"
+        g = SafeGit.init(work, bare=False)
+        (work / ".gitignore").write_bytes(b"*.sh\n")
+        (work / "run.sh").write_bytes(b"echo\n")
+        (work / "old.txt").write_bytes(b"old\n")
+        (work / "desktop.ini").write_bytes(b"x\n")
+        g.commit_all("one", [".gitignore", "run.sh", "old.txt"])
+        (work / "old.txt").unlink()
+        (work / "new.txt").write_bytes(b"new\n")
+        g.commit_all("two", [".gitignore", "run.sh", "new.txt"])
+        files = g.run("ls-files", "-z").split(b"\x00")
+        self.assertEqual(sorted(f for f in files if f), [b".gitignore", b"new.txt", b"run.sh"])
+
     def test_global_autocrlf_ignored(self):
         (self.home / ".gitconfig").write_text("[core]\n\tautocrlf = true\n")
         control = self.root / "control"
