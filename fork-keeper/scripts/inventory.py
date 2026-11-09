@@ -242,6 +242,53 @@ def _claude_json(home):
     return out
 
 
+def _project_folders(home):
+    path = Path(home) / ".claude.json"
+    try:
+        data = _read_json(path) if path.is_file() else {}
+    except (OSError, ValueError):
+        return []
+    projects = data.get("projects") if isinstance(data, dict) else None
+    return [Path(p) for p in sorted(projects)] if isinstance(projects, dict) else []
+
+
+def _mcp_files(config, home):
+    """Every .mcp.json in the own source roots, the installed skill folders and the known project folders."""
+    found = []
+    for spec in config.get("ownSourceRoots", []):
+        root = _expand(spec, home)
+        if root.is_dir():
+            for dirpath, dirnames, filenames in os.walk(root):
+                dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d not in _SKIP_DIRS)
+                if ".mcp.json" in filenames:
+                    found.append(Path(dirpath) / ".mcp.json")
+    for spec in config.get("skillsRoots", []):
+        root = _expand(spec, home)
+        if root.is_dir():
+            found += [c / ".mcp.json" for c in sorted(root.iterdir(), key=lambda p: p.name) if (c / ".mcp.json").is_file()]
+    found += [p / ".mcp.json" for p in _project_folders(home) if (p / ".mcp.json").is_file()]
+    seen, out = set(), []
+    for f in found:
+        key = os.path.normcase(os.path.abspath(f))
+        if key not in seen:
+            seen.add(key)
+            out.append(f)
+    return out
+
+
+def _file_servers(config, home):
+    items = []
+    for f in _mcp_files(config, home):
+        try:
+            servers = _server_map(_read_json(f), direct_allowed=True)
+        except (OSError, ValueError) as e:
+            items.append(Item("mcp", f.name, str(f), "unclassified", ["could not read: {}".format(e)]))
+            continue
+        items += [_mcp(n, c, str(f), None) for n, c in sorted(servers.items())]
+    return items
+
+
 def run(config, copies, audit_text, home):
     plugins, plugin_servers = _plugins(audit_text, home)
-    return _skills(config, copies, audit_text, home) + plugins + plugin_servers + _claude_json(home)
+    return (_skills(config, copies, audit_text, home) + plugins + plugin_servers + _claude_json(home)
+            + _file_servers(config, home))

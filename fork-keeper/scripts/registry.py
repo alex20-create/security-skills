@@ -1,5 +1,6 @@
 """Load, validate and save a copy's registry files (copy.json, manifest.json, series)."""
 
+import datetime
 import json
 import os
 import re
@@ -13,6 +14,7 @@ DEFAULT_IGNORE = (".DS_Store", "Thumbs.db", "desktop.ini", "__pycache__/")
 TEXT_RULE = "copies/** -text"
 
 _SHA = re.compile(r"[0-9a-f]{40}")
+_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _HASH = re.compile(r"[0-9a-f]{64}")
 _PATCH_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _COPY_KEYS = {"name", "kind", "copy", "installs", "origins"}
@@ -107,6 +109,16 @@ def _no_extra(obj, allowed, where):
         raise RegistryError("{}: unknown field(s): {}".format(where, ", ".join(extra)))
 
 
+def _date(value, what):
+    try:
+        ok = isinstance(value, str) and bool(_DATE.fullmatch(value)) and datetime.date.fromisoformat(value)
+    except ValueError:
+        ok = False
+    if not ok:
+        raise RegistryError("{} must be a real date YYYY-MM-DD, got {!r}".format(what, value))
+    return value
+
+
 def _sha(value, what):
     if not isinstance(value, str) or not _SHA.fullmatch(value):
         raise RegistryError("{} must be a full 40-character lowercase SHA, got {!r}".format(what, value))
@@ -186,10 +198,11 @@ def _origin(raw, where):
         if verdict not in VERDICTS:
             raise RegistryError("{}: audit verdict must be one of {}, got {!r}".format(where, ", ".join(VERDICTS), verdict))
         audit = Audit(_sha(_need(audit, "commit", where + " audit"), where + " audit commit"),
-                      verdict, _str(audit, "date", where + " audit"), _str(audit, "record", where + " audit"))
+                      verdict, _date(_need(audit, "date", where + " audit"), where + " audit date"),
+                      _str(audit, "record", where + " audit"))
     last = raw.get("lastChecked")
-    if last is not None and not isinstance(last, str):
-        raise RegistryError("{}: lastChecked must be a date string or null".format(where))
+    if last is not None:
+        _date(last, where + " lastChecked")
     return Origin(oid, url, pin, track, _str(raw, "license", where), entries, audit, last)
 
 
@@ -234,7 +247,11 @@ def _read_json(path):
 
 
 def load_copy(folder):
-    return parse_copy(_read_json(Path(folder) / "copy.json"), folder)
+    c = parse_copy(_read_json(Path(folder) / "copy.json"), folder)
+    if c.name != Path(folder).name:
+        raise RegistryError("{}: name {!r} does not match its folder {!r}".format(
+            Path(folder) / "copy.json", c.name, Path(folder).name))
+    return c
 
 
 def _spec(spec, path):

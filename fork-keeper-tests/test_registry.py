@@ -31,6 +31,24 @@ class LoadCopyTests(unittest.TestCase):
         self.assertIn("pin", str(cm.exception))
         self.assertIn("40", str(cm.exception))
 
+    def test_rejects_bad_dates(self):
+        for where, value in (("lastChecked", "2026-02-30"), ("lastChecked", "yesterday"),
+                             ("audit", "2026-1-5"), ("audit", "2026-13-01")):
+            data = sample_copy()
+            if where == "audit":
+                data["origins"][0]["audit"]["date"] = value
+            else:
+                data["origins"][0]["lastChecked"] = value
+            with self.subTest(where=where, value=value):
+                with self.assertRaises(RegistryError) as cm:
+                    self.load(data)
+                self.assertIn("YYYY-MM-DD", str(cm.exception))
+
+    def test_name_must_match_folder(self):
+        with self.assertRaises(RegistryError) as cm:
+            self.load(sample_copy(name="other"))
+        self.assertIn("folder", str(cm.exception))
+
     def test_rejects_short_audit_commit(self):
         data = sample_copy()
         data["origins"][0]["audit"]["commit"] = "74053d6"

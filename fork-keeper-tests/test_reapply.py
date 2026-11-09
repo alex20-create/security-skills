@@ -224,5 +224,21 @@ class ReapplyTests(unittest.TestCase):
         self.assertEqual(read_tree(target), read_tree(reapply.result_tree(self.work)))
 
 
+class SectionTests(unittest.TestCase):
+    def test_plain_header(self):
+        diff = b"diff --git a/x.md b/x.md\nnew file mode 100644\n"
+        self.assertEqual(reapply._sections(diff), [("x.md", True)])
+
+    def test_quoted_headers(self):
+        diff = (b'diff --git "a/sp ace\\"q.md" "b/sp ace\\"q.md"\nnew file mode 100644\n'
+                b'diff --git "a/caf\\303\\251\\tx.md" "b/caf\\303\\251\\tx.md"\nindex 1..2 100644\n'
+                b'diff --git "a/back\\\\slash.md" "b/back\\\\slash.md"\ndeleted file mode 100644\n')
+        self.assertEqual(reapply._sections(diff), [('sp ace"q.md', True), ("café\tx.md", False),
+                                                   ("back\\slash.md", False)])
+
+    def test_mismatched_quoted_header_is_skipped(self):
+        self.assertEqual(reapply._sections(b'diff --git "a/one.md" "b/two.md"\n'), [])
+
+
 if __name__ == "__main__":
     unittest.main()

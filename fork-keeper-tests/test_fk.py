@@ -369,6 +369,81 @@ class FkTests(unittest.TestCase):
         self.assertEqual(tree_bytes(self.install), before_install)
         self.assertEqual(tree_bytes(self.reg / "copies"), before_entry)
 
+    # -- deferred minors --------------------------------------------------------
+
+    def test_register_line_ending_refusal_is_short(self):
+        names = ["scripts/f{}.py".format(n) for n in range(8)]
+        new = make_repo(self.up, {"skills/sample/" + n: b"x\n" for n in names}, "more files")
+        self.audit_entry(new)
+        self.write_draft(pin=new[:7])
+        write_files(self.copy, {n: b"x\r\n" for n in names})
+        code = self.fk("register", "--draft", str(self.draft), "--scratch", str(self.scratch), "--summary", "x")
+        self.assertEqual(code, 1, self.last)
+        self.assertIn("8 files", self.last)
+        self.assertIn("scripts/f0.py", self.last)
+        self.assertIn("and 3 more", self.last)
+        self.assertNotIn("scripts/f7.py", self.last)
+
+    def test_install_refuses_series_changed_after_reapply(self):
+        self.checked_with_verdict({"skills/sample/scripts/a.py": b"print('a2')\n"})
+        self.assertEqual(self.fk("reapply", *self.scratch_args()), 0, self.last)
+        patch = self.reg / "copies" / "sample" / "patches" / "0001-patch-line-five.patch"
+        patch.write_bytes(patch.read_bytes().replace(b"+line 5 patched", b"+line 5 sneaked"))
+        before = tree_bytes(self.install)
+        self.assertEqual(self.fk("install", *self.scratch_args(), "--yes"), 1, self.last)
+        self.assertIn("series", self.last)
+        self.assertEqual(tree_bytes(self.install), before)
+
+    def test_install_folder_replaced_by_file(self):
+        self.register()
+        git(self.up, "rm", "-q", "-r", "skills/sample/scripts")
+        write_files(self.up, {"skills/sample/scripts": b"now a file\n"})
+        git(self.up, "add", "-A")
+        git(self.up, "commit", "-q", "-m", "scripts becomes a file")
+        new = git(self.up, "rev-parse", "HEAD").decode().strip()
+        self.verdict_for(new)
+        self.assertEqual(self.fk("reapply", *self.scratch_args()), 0, self.last)
+        self.assertEqual(self.fk("install", *self.scratch_args(), "--yes"), 0, self.last)
+        for target in (self.copy, self.install):
+            t = tree_bytes(target)
+            self.assertEqual(t.get("scripts"), b"now a file\n", sorted(t))
+        self.assertEqual(self.fk("verify"), 0, self.last)
+
+    def test_install_commit_hint_names_only_the_copy(self):
+        git(self.tmp, "init", "-q")
+        self.checked_with_verdict({"skills/sample/scripts/a.py": b"print('a2')\n"})
+        self.assertEqual(self.fk("reapply", *self.scratch_args()), 0, self.last)
+        self.assertEqual(self.fk("install", *self.scratch_args(), "--yes"), 0, self.last)
+        self.assertIn('add -A -- "copy"', self.last)
+        self.assertNotRegex(self.last, r"add -A\s*\n")
+
+    def test_applies_to_names_every_origin(self):
+        def origin(oid, sha):
+            return registry.Origin(oid, "https://example.invalid/" + oid, sha, "main", "MIT", [], None, None)
+        sha_a, sha_b, sha_c = "a" * 40, "b" * 40, "c" * 40
+        both = [origin("one", sha_a), origin("two", sha_b)]
+        self.assertEqual(fk._applies_to(both), "one@{}, two@{}".format(sha_a, sha_b))
+        self.assertEqual(fk._applies_to(both, "two", sha_c), "one@{}, two@{}".format(sha_a, sha_c))
+
+    def test_registry_errors_are_escaped(self):
+        self.register()
+        path = self.reg / "copies" / "sample" / "copy.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["\x1b[2Jevil"] = 1
+        path.write_text(json.dumps(data), encoding="utf-8")
+        self.assertEqual(self.fk("status"), 2, self.last)
+        self.assertNotIn("\x1b", self.last)
+        self.assertIn("evil", self.last)
+
+    def test_bad_date_in_copy_json_is_a_registry_error(self):
+        self.register()
+        path = self.reg / "copies" / "sample" / "copy.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["origins"][0]["lastChecked"] = "2026-13-45"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        self.assertEqual(self.fk("status"), 2, self.last)
+        self.assertIn("lastChecked", self.last)
+
 
 if __name__ == "__main__":
     unittest.main()

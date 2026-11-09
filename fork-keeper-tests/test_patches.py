@@ -113,6 +113,17 @@ class PatchTests(unittest.TestCase):
                 with self.assertRaises(PatchError):
                     Dep3(**args)
 
+    def test_applies_to_lists_several_origins(self):
+        both = "one@{}, two@{}".format(SHA_B, "c" * 40)
+        h = Dep3(description="x", applies_to=both, last_update="2026-11-09")
+        parsed, diff = patches.parse(patches.render(h, b"DIFF"))
+        self.assertEqual(parsed.applies_to, both)
+        self.assertEqual(diff, b"DIFF")
+        for bad in ("one@{},two@{}".format(SHA_B, SHA_B), "one@{}, ".format(SHA_B), "one@{}, two".format(SHA_B)):
+            with self.subTest(bad=bad):
+                with self.assertRaises(PatchError):
+                    Dep3(description="x", applies_to=bad, last_update="2026-11-09")
+
     def test_desktop_ini_ignored(self):
         write_files(self.copy, {
             "desktop.ini": b"[.ShellClassInfo]\r\n",

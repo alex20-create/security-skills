@@ -17,6 +17,13 @@ class TreeError(Exception):
 
 
 _RESERVED = {"con", "prn", "aux", "nul"} | {"{}{}".format(d, n) for d in ("com", "lpt") for n in range(1, 10)}
+# Bidirectional controls reorder how a name is shown ("evil‮gpj.md" displays as "evildm.jpg").
+_BIDI = set("؜‎‏‪‫‬‭‮⁦⁧⁨⁩")
+
+
+def _control(c):
+    """C0 and C1 controls, DEL and the bidirectional controls."""
+    return ord(c) < 32 or 0x7f <= ord(c) <= 0x9f or c in _BIDI
 
 
 def check_path_safe(path, where):
@@ -26,7 +33,7 @@ def check_path_safe(path, where):
     for p in path.split("/"):
         low = p.casefold()
         if p in ("", ".", "..") or low in (".git", "git~1") or low.split(".", 1)[0] in _RESERVED \
-                or any(c in _WINDOWS_BAD or ord(c) < 32 for c in p) or p.endswith((" ", ".")):
+                or any(c in _WINDOWS_BAD or _control(c) for c in p) or p.endswith((" ", ".")):
             raise TreeError("{}: unsafe path {!r}".format(where, path))
     return path
 

@@ -95,20 +95,75 @@ def _markers(g, work, paths):
     return out
 
 
+_C_ESCAPES = {ord("a"): 7, ord("b"): 8, ord("t"): 9, ord("n"): 10, ord("v"): 11, ord("f"): 12, ord("r"): 13,
+              ord('"'): 34, ord("\\"): 92}
+
+
+def _unquote(data, i):
+    """Read the C-style string git quotes a path with, starting at the quote at ``data[i]``.
+
+    Returns (bytes, index after the closing quote), or None when it is malformed.
+    """
+    out = bytearray()
+    i += 1
+    while i < len(data):
+        c = data[i]
+        if c == 34:
+            return bytes(out), i + 1
+        if c != 92:
+            out.append(c)
+            i += 1
+            continue
+        nxt = data[i + 1] if i + 1 < len(data) else None
+        if nxt in _C_ESCAPES:
+            out.append(_C_ESCAPES[nxt])
+            i += 2
+        elif data[i + 1:i + 4].isdigit() and len(data[i + 1:i + 4]) == 3:
+            out.append(int(data[i + 1:i + 4], 8) & 0xff)
+            i += 4
+        else:
+            return None
+    return None
+
+
+def _header_paths(head):
+    """The a/ and b/ paths of a ``diff --git`` header, or None when it cannot be split for sure."""
+    if head.startswith(b'"'):
+        first = _unquote(head, 0)
+        if first is None or head[first[1]:first[1] + 2] != b' "':
+            return None
+        second = _unquote(head, first[1] + 1)
+        if second is None or second[1] != len(head):
+            return None
+        a, b = first[0], second[0]
+    else:
+        n = (len(head) - 5) // 2
+        if len(head) != 2 * n + 5:
+            return None
+        a, b = head[:n + 2], head[n + 3:]
+    if not (a.startswith(b"a/") and b.startswith(b"b/")):
+        return None
+    return a[2:].decode("utf-8", "replace"), b[2:].decode("utf-8", "replace")
+
+
 def _sections(diff):
     """(path, created) for every file section of a git diff whose header is unambiguous."""
     out = []
     for block in (b"\n" + diff).split(b"\ndiff --git ")[1:]:
         lines = block.split(b"\n")
-        head = lines[0].decode("utf-8", "replace")
         created = any(l.startswith(b"new file mode ") for l in lines[1:8])
-        rename = [l[len(b"rename from "):].decode("utf-8", "replace") for l in lines[1:8] if l.startswith(b"rename from ")]
+        rename = [l[len(b"rename from "):] for l in lines[1:8] if l.startswith(b"rename from ")]
         if rename:
-            out.append((rename[0], False))
+            raw = rename[0]
+            if raw.startswith(b'"'):
+                quoted = _unquote(raw, 0)
+                raw = quoted[0] if quoted is not None and quoted[1] == len(raw) else None
+            if raw is not None:
+                out.append((raw.decode("utf-8", "replace"), False))
             continue
-        n = (len(head) - 5) // 2
-        if head.startswith("a/") and len(head) == 2 * n + 5 and head[2:2 + n] == head[5 + n:]:
-            out.append((head[2:2 + n], created))
+        paths = _header_paths(lines[0])
+        if paths is not None and paths[0] == paths[1]:
+            out.append((paths[0], created))
     return out
 
 

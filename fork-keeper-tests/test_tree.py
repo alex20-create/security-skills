@@ -134,6 +134,13 @@ class TreeTests(unittest.TestCase):
                     tree.check_path_safe(bad, "test")
         self.assertEqual(tree.check_path_safe("ok/name.md", "test"), "ok/name.md")
 
+    def test_c1_and_bidi_controls_refused(self):
+        for bad in ("a\u0085b.md", "a\u009bb.md", "a\x7fb.md", "evil‮gpj.md", "x⁦y.md", "x‏y.md"):
+            with self.subTest(bad=bad):
+                with self.assertRaises(TreeError):
+                    tree.check_path_safe(bad, "test")
+        self.assertEqual(tree.check_path_safe("café/ñ.md", "test"), "café/ñ.md")
+
     def test_prefix_is_not_a_folder_match(self):
         make_repo(self.up, {"skills/xy/other.md": b"o\n"}, "sibling")
         sha = git(self.up, "rev-parse", "HEAD").decode().strip()

@@ -111,7 +111,8 @@ characters. `install` later copies the verdict, record and date into
 - `reapply` and `install` refuse while `state.json` has no verdict, and stop
   for good on `DO NOT INSTALL`.
 - `install` refuses while the re-apply is unfinished or has changes it did
-  not make.
+  not make, and when `series` or any patch in it changed after `reapply`
+  started: run `reapply` again from the start.
 
 A refusal is the lock doing its job. Fix what it names; never edit the
 registry or `state.json` by hand to get past it.
@@ -142,7 +143,8 @@ python -I scripts/fk.py reapply --registry <reg> --copy <name> --scratch <dir> -
   changed since the conflict. When the right answer is to drop the patch's
   change because upstream now covers it, add `--accept-empty` and say so.
 - Progress lives inside the work repository's `.git` folder, so it is never
-  part of the result. A changed `series` since the start is refused.
+  part of the result. A `series`, or a patch in it, changed since the start
+  is refused.
 
 ## 5. `install`
 
@@ -165,8 +167,9 @@ python -I scripts/fk.py install --registry <reg> --copy <name> --scratch <dir> -
   2. for each target, deletes first and then writes, keeping a journal of
      every file before it touches it, then checks that the target hashes to
      the result; deleting first keeps a case-only rename (`a.py` to `A.py`)
-     intact on a case-insensitive disk. Files the ignore patterns cover (and
-     a target's own `.git`) are left alone;
+     intact on a case-insensitive disk, and folders the deletions emptied are
+     removed, so a folder that became a file upstream can be written. Files
+     the ignore patterns cover (and a target's own `.git`) are left alone;
   3. regenerates each patch as the diff between its consecutive commits in
      the work repository, with `Applies-To` at the new SHA and today as
      `Last-Update`; a patch that became empty is reported, not removed;
@@ -176,7 +179,8 @@ python -I scripts/fk.py install --registry <reg> --copy <name> --scratch <dir> -
   journal from the backup, restores the registry entry and says so; a
   failure exits `1`.
 - It ends by printing the commits to make in the registry, and in the copy's
-  own repository if it has one. Run them only on a yes. Then remind the user
+  own repository if it has one; the latter stages only the copy's own folder.
+  Run them only on a yes. Then remind the user
   how this copy is reinstalled (local map).
 
 ## `verify --rebuild`

@@ -154,6 +154,7 @@ class SafeGit:
             "fetch.recurseSubmodules=false",
             "fetch.fsckObjects=true",
             "credential.helper=",
+            "http.followRedirects=initial",
             "commit.gpgsign=false",
             "tag.gpgsign=false",
             "init.defaultBranch=main",
