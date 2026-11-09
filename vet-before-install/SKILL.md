@@ -6,7 +6,8 @@ dependencies. Enforces a two-stage discipline — deterministic sweep for
 recall, then a manual contract check for judgment — and works with zero
 dependencies: it uses installed security tools when present (a skill
 scanner, insecure-defaults, supply-chain or context-building auditors) and
-falls back to built-in procedures otherwise. Use whenever the user says
+falls back to built-in procedures otherwise, and offers any other installed
+security skills as optional extra passes. Use whenever the user says
 'audit this', 'is this safe to install?', '¿es seguro?', passes a GitHub URL
 or local path asking for a security review, or wants to vet a skill, plugin,
 MCP server, or third-party project before installing or running it. Not for
@@ -58,6 +59,34 @@ security tooling: a skill-audit scanner (e.g. `skill-security`), an
 insecure-defaults auditor, a supply-chain auditor, a context-building skill.
 Note what is present — the sequence below names the accelerated and the
 manual path for each step, and the report must say which one ran.
+
+### Supplementary security tools (optional, ask first)
+
+The four roles above are the routine path. The session may also have other
+security tooling installed: a code security reviewer, a multi-agent
+vulnerability scanner, a secrets or SAST skill, a security-focused subagent.
+Find them in the available skills, plugins and agent types by what their
+descriptions say (security, vulnerability, audit, secrets, CVE, threat), not
+by name. Leave out any tool already filling one of the four roles, and leave
+out this skill.
+
+If at least one turns up, ask the user once, before the sequence starts,
+which ones to add. Use a single multi-select question that lists each tool
+with one line on what it would add to this audit and its rough cost, and
+flag multi-agent or long-running tools as expensive. If none turn up, say
+nothing and carry on. Run only the tools the user picks, and don't offer
+them again mid-audit.
+
+A supplementary tool runs under this skill's rules, not its own:
+- **Read-only, on the isolated copy.** Point it at the Stage 0 snapshot. Skip
+  any tool whose workflow installs, builds, runs, tests or edits the target,
+  and tell the user you skipped it. A tool that writes patches runs in a
+  report-only mode if it has one, and otherwise doesn't run.
+- **Reframe the target.** Many review tools assume the code is the user's own
+  diff. Tell the tool this is third-party code being vetted, and give it the
+  path and snapshot.
+- **Worklist, not verdict.** Its findings go through Stage 2 like the sweep's.
+  Its score or verdict never replaces this skill's.
 
 **Then classify the target:**
 
@@ -183,6 +212,7 @@ Lead with the verdict, cite `file:line`, explain why each finding matters.
 **Verdict: <LIKELY SAFE | USE WITH CAUTION | DO NOT INSTALL>**
 Audited at: <commit SHA, tag, version, or archive SHA-256>
 Sweep: <tool name and score, or "manual pattern battery"; omit if no sweep ran>
+Supplementary: <tools that ran; offered but declined; omit if none found>
 
 <bottom line and the single most important reason. If you overrode a
 tool's score, say so and say why.>
