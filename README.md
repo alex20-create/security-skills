@@ -78,7 +78,10 @@ Just ask, in any phrasing:
 - "check the dependencies of this project"
 
 The report leads with a verdict (`LIKELY SAFE` / `USE WITH CAUTION` /
-`DO NOT INSTALL`), records the exact commit or version audited, cites
+`DO NOT INSTALL`) and the count of findings that survived review, by
+severity. A scanner's raw score never heads the report: it is computed
+before anyone reads the code, so it appears only at the end, labelled as
+raw. The report also records the exact commit or version audited, cites
 `file:line` for every finding, marks false positives explicitly, and says
 what was *not* checked.
 
