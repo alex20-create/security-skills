@@ -159,7 +159,7 @@ def eol_mismatches(base, copy):
     return out
 
 
-def _clear_work_tree(work):
+def clear_work_tree(work):
     for child in Path(work).iterdir():
         if child.name == ".git":
             continue
@@ -178,7 +178,7 @@ def generate(base, copy, work, ignore):
     g.run("config", "core.fileMode", "false")
     copy_tree(base, work, ignore)
     g.commit_all("base")
-    _clear_work_tree(work)
+    clear_work_tree(work)
     copy_tree(copy, work, ignore)
     g.run("add", "-A")
     return g.run("diff", "--cached", "--binary", "-M", "--full-index", "--no-ext-diff", "--no-textconv",
