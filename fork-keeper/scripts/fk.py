@@ -22,6 +22,7 @@ import argparse  # noqa: E402
 import dataclasses  # noqa: E402
 import datetime  # noqa: E402
 import difflib  # noqa: E402
+import hashlib  # noqa: E402
 import json  # noqa: E402
 import os  # noqa: E402
 import re  # noqa: E402
@@ -248,6 +249,20 @@ def _slug(text):
     return (s[:50].rstrip("-") or "local-changes")
 
 
+def _applies_to(origins, oid=None, sha=None):
+    """The patches' Applies-To: every origin at its pin, with ``oid`` moved to ``sha``."""
+    return ", ".join("{}@{}".format(o.id, sha if o.id == oid else o.pin) for o in origins)
+
+
+def _series_digest(c):
+    """One hash over the series and every patch in it, so a change after reapply is caught."""
+    h = hashlib.sha256()
+    for path in registry.read_series(c.folder):
+        data = path.read_bytes() if path.is_file() else b""
+        h.update(path.name.encode("utf-8") + b"\x00" + hashlib.sha256(data).digest())
+    return h.hexdigest()
+
+
 def _repo_of(path):
     p = Path(path).resolve()
     for d in (p, *p.parents):
@@ -326,15 +341,16 @@ def cmd_register(a):
     _build(base, [(o.id, gits[o.id], o.pin, o.map) for o in c.origins])
     eol = patches.eol_mismatches(base, c.copy)
     if eol:
-        raise Stop(DIFF, "line endings differ between the original and the copy in: {}. Fix the copy's line "
-                         "endings (or git's autocrlf) and register again.".format(", ".join(clean(p) for p in eol)))
+        shown = ", ".join(clean(p) for p in eol[:5]) + (" and {} more".format(len(eol) - 5) if len(eol) > 5 else "")
+        raise Stop(DIFF, "line endings differ between the original and the copy in {} file{}: {}. Fix the copy's "
+                         "line endings (or git's autocrlf) and register again.".format(
+                             len(eol), "" if len(eol) == 1 else "s", shown))
     diff = patches.generate(base, c.copy, work / "gen", ignore)
     manifest = verify_mod.hash_tree(c.copy, ignore)
     patch_name = "0001-{}.patch".format(_slug(a.summary))
     series = []
     if diff:
-        header = patches.Dep3(description=a.summary, applies_to="{}@{}".format(c.origins[0].id, c.origins[0].pin),
-                              last_update=_today())
+        header = patches.Dep3(description=a.summary, applies_to=_applies_to(c.origins), last_update=_today())
         rendered = patches.render(header, diff)
         staged = work / "patches" / patch_name
         _write_file(staged, rendered)
@@ -510,15 +526,19 @@ def _describe(results):
 def cmd_reapply(a):
     c = _load(a, a.copy)
     cfg = _config(a)
-    _locked_state(a, c)
+    state = _locked_state(a, c)
     work = _work(a, c.name)
     series = registry.read_series(c.folder)
     if a.cont:
+        if state.get("series") != _series_digest(c):
+            raise Stop(DIFF, "the series or a patch changed since reapply started; run reapply again from the start")
         results = reapply_mod.resume(work / "work", series, accept_empty=a.accept_empty)
     else:
         if not (work / "base-old").is_dir() or not (work / "base-new").is_dir():
             raise Stop(USAGE, "the bases are missing; run check first")
         _rmtree(work / "work")
+        state["series"] = _series_digest(c)
+        _write_state(a, c, state)
         results = reapply_mod.start(work / "base-old", work / "base-new", series, work / "work", cfg.get("ignore", []))
     done = all(r.status in ("clean", "merged") for r in results)
     lines = _describe(results)
@@ -566,6 +586,8 @@ def cmd_install(a):
     state = _locked_state(a, c)
     o = _pick_origin(c, state["origin"])
     work = _work(a, c.name)
+    if state.get("series") != _series_digest(c):
+        raise Stop(DIFF, "the series or a patch changed since reapply ran; run reapply again before installing")
     try:
         result = reapply_mod.result_tree(work / "work")
     except reapply_mod.ReapplyError as e:
@@ -614,6 +636,12 @@ def cmd_install(a):
             for rel in sorted(set(current) - set(res_files)):
                 journal.append((t / rel, backup / str(n) / rel))
                 (t / rel).unlink()
+            # A folder that becomes a file: drop the folders the deletions emptied, deepest first.
+            emptied = {p for rel in set(current) - set(res_files) for p in (t / rel).parents
+                       if p != t and t in p.parents}
+            for d in sorted(emptied, key=lambda p: len(p.parts), reverse=True):
+                if d.is_dir() and not any(d.iterdir()):
+                    d.rmdir()
             for rel in sorted(res_files):
                 dst, data = t / rel, (result / rel).read_bytes()
                 if dst.is_file() and dst.read_bytes() == data:
@@ -628,7 +656,7 @@ def cmd_install(a):
         diffs = reapply_mod.per_patch_diffs(work / "work")
         for path, d in zip(registry.read_series(c.folder), diffs):
             h, _ = patches.parse(path.read_bytes())
-            h = dataclasses.replace(h, applies_to="{}@{}".format(o.id, state["new"]), last_update=_today())
+            h = dataclasses.replace(h, applies_to=_applies_to(c.origins, o.id, state["new"]), last_update=_today())
             _write_file(path, patches.render(h, d))
             if not d:
                 lines.append("Note: {} is now empty; remove it from series if it is no longer needed.".format(path.name))
@@ -660,7 +688,8 @@ def cmd_install(a):
               '  git -C "{}" commit -m "chore({}): update {} to {}"'.format(reg, c.name, o.id, state["new"][:12])]
     repo = _repo_of(c.copy)
     if repo is not None and not _same(repo, reg):
-        lines += ['  git -C "{}" add -A'.format(repo),
+        inside = Path(c.copy).resolve().relative_to(repo).as_posix() or "."
+        lines += ['  git -C "{}" add -A -- "{}"'.format(repo, inside),
                   '  git -C "{}" commit -m "chore: update from {} {}"'.format(repo, o.id, state["new"][:12])]
     lines.append("Reinstall anything built from this copy (for example a packaged .skill).")
     _emit(a, lines, {"installed": state["new"]})
@@ -803,10 +832,10 @@ def main(argv=None):
     try:
         return a.func(a)
     except Stop as s:
-        print(s.message)
+        print(clean(s.message))
         return s.code
     except RegistryError as e:
-        print("registry error: {}".format(e))
+        print("registry error: {}".format(clean(e)))
         return USAGE
     except _ERRORS as e:
         print("error: {}".format(clean(e)))

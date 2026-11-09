@@ -56,6 +56,10 @@ class FetchTests(unittest.TestCase):
     def bare(self, **kw):
         return SafeGit.init(self.root / "mirror.git", bare=True, allow_file=True, **kw)
 
+    def test_redirects_limited_to_the_first_request(self):
+        flags = self.bare()._flags()
+        self.assertIn("http.followRedirects=initial", flags)
+
     def test_fetch_by_sha_from_file_remote(self):
         g = self.bare()
         g.fetch(file_url(self.up), [self.first])

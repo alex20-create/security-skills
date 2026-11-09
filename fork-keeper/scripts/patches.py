@@ -16,7 +16,8 @@ from pathlib import Path
 from gitsafe import SafeGit
 from registry import DEFAULT_IGNORE
 
-_APPLIES_TO = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*@[0-9a-f]{40}")
+_ONE_ORIGIN = r"[A-Za-z0-9][A-Za-z0-9._-]*@[0-9a-f]{40}"
+_APPLIES_TO = re.compile(r"{0}(?:, {0})*".format(_ONE_ORIGIN))
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _FIELDS = ("Description", "Origin", "Forwarded", "Applies-To", "Last-Update")
 _TEXT_PROBE = 8000
@@ -45,7 +46,8 @@ class Dep3:
                 raise PatchError("description line {!r} would not survive a round trip; "
                                  "use an empty line or real text".format(l))
         if not isinstance(self.applies_to, str) or not _APPLIES_TO.fullmatch(self.applies_to):
-            raise PatchError("Applies-To must be <origin id>@<full SHA>, got {!r}".format(self.applies_to))
+            raise PatchError("Applies-To must be <origin id>@<full SHA>, comma-separated for several origins, "
+                             "got {!r}".format(self.applies_to))
         try:
             ok = bool(_DATE.fullmatch(self.last_update)) and date.fromisoformat(self.last_update)
         except (TypeError, ValueError):

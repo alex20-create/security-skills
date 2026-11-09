@@ -227,6 +227,25 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(items["proj"].colour, "unclassified")
         self.assertIn("C:/work/app", items["proj"].path)
 
+    def test_mcp_json_in_own_source_roots(self):
+        write_files(self.src / "repo", {".mcp.json": json.dumps({"mcpServers": {
+            "local-tool": {"command": "npx", "args": ["-y", "some-pkg"]}}}).encode()})
+        write_files(self.src / "repo" / "node_modules" / "dep", {".mcp.json": json.dumps({"mcpServers": {
+            "vendored": {"command": "node", "args": ["x.js"]}}}).encode()})
+        items = {i.name: i for i in self.run_inventory() if i.kind == "mcp"}
+        self.assertEqual(sorted(items), ["local-tool"])
+        self.assertEqual(items["local-tool"].colour, "amber")
+        self.assertTrue(items["local-tool"].path.endswith(".mcp.json"))
+
+    def test_mcp_json_in_claude_json_project_folders(self):
+        project = self.tmp / "work" / "app"
+        write_files(project, {".mcp.json": json.dumps({"mcpServers": {
+            "project-tool": {"type": "http", "url": "https://z"}}}).encode()})
+        (self.home / ".claude.json").write_text(json.dumps({"projects": {project.as_posix(): {}}}))
+        items = {i.name: i for i in self.run_inventory() if i.kind == "mcp"}
+        self.assertEqual(sorted(items), ["project-tool"])
+        self.assertIn(".mcp.json", items["project-tool"].path)
+
     def test_reasons_never_carry_env_values(self):
         (self.home / ".claude.json").write_text(json.dumps({"mcpServers": {
             "secret": {"command": "npx", "args": ["pkg"], "env": {"API_KEY": "sk-live-123"}}}}))

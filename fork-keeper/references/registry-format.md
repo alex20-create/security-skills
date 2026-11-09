@@ -48,12 +48,13 @@ Every file is UTF-8 and written with `\n` line endings.
 }
 ```
 
-Every key shown is required; unknown keys are refused, so a typo cannot pass
-silently.
+Every key shown is required except an origin's `audit` and `lastChecked`,
+which may be left out or `null`; unknown keys are refused, so a typo cannot
+pass silently. Dates are `YYYY-MM-DD` and must be real dates.
 
 | Key | Rule |
 |---|---|
-| `name` | Letters, digits, `.`, `_`, `-`. Also the folder name under `copies/`. |
+| `name` | Letters, digits, `.`, `_`, `-`. Must equal the copy's folder name under `copies/`. |
 | `kind` | `skill`, `plugin`, `repo` or `mcp`. |
 | `copy` | Where the copy's source lives. `~` is expanded. |
 | `installs` | A list of places that must equal `copy`; may include `copy` itself. `verify` and `install` cover each one. |
@@ -105,9 +106,11 @@ diff --git a/SKILL.md b/SKILL.md
 - These five fields and no others; fork-keeper writes them in this order and
   refuses any other field. Description continuation lines start with one
   space; a line that would be empty is written as ` .`.
-- `Applies-To` names the origin and the full SHA of the base the diff was made
-  against. `install` rewrites it, and `Last-Update`, every time a pin moves,
-  and regenerates the diff against the new base so offsets never pile up.
+- `Applies-To` names each origin and the full SHA of the base the diff was
+  made against, as `id@sha`, comma-separated when the copy has several
+  origins (`one@<sha>, two@<sha>`). `install` rewrites it, and `Last-Update`,
+  every time a pin moves, and regenerates the diff against the new base so
+  offsets never pile up.
 - Paths in the diff are relative to `copy`, after mapping.
 - `register` writes one patch for all of the copy's differences. Splitting it
   into topics is done by hand; fork-keeper does not guess topics.
