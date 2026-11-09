@@ -84,7 +84,15 @@ class FkTests(unittest.TestCase):
     def checked_with_verdict(self, files, verdict="USE WITH CAUTION"):
         self.register()
         new = self.upstream_change(files)
+        return self.verdict_for(new, verdict)
+
+    def audit_entry(self, sha):
+        with self.audit.open("a") as f:
+            f.write("- [x] `sample` - example @ `{}` delta\n".format(sha[:7]))
+
+    def verdict_for(self, new, verdict="USE WITH CAUTION"):
         self.assertEqual(self.fk("check", *self.scratch_args()), 1, self.last)
+        self.audit_entry(new)
         self.assertEqual(self.fk("record-verdict", *self.scratch_args(), "--verdict", verdict,
                                  "--record", "sample", "--date", "2026-11-20"), 0, self.last)
         return new
@@ -209,6 +217,7 @@ class FkTests(unittest.TestCase):
         self.assertEqual((audit_dir / "skills/sample/scripts/a.py").read_bytes(), b"print('a2')\n")
         self.assertEqual(self.fk("reapply", *self.scratch_args()), 1)
         self.assertIn("verdict", self.last)
+        self.audit_entry(new)
         self.assertEqual(self.fk("record-verdict", *self.scratch_args(), "--verdict", "USE WITH CAUTION",
                                  "--record", "sample", "--date", "2026-11-20"), 0, self.last)
         self.assertEqual(self.fk("reapply", *self.scratch_args()), 0, self.last)
@@ -281,6 +290,76 @@ class FkTests(unittest.TestCase):
         def failing(path, data):
             if Path(path).name == "a.py" and Path(path).is_relative_to(self.install):
                 raise OSError("disk full (simulated)")
+            real(path, data)
+        fk._write_file = failing
+        self.addCleanup(setattr, fk, "_write_file", real)
+        self.assertEqual(self.fk("install", *self.scratch_args(), "--yes"), 1)
+        self.assertIn("restored", self.last)
+        self.assertEqual(tree_bytes(self.copy), before_copy)
+        self.assertEqual(tree_bytes(self.install), before_install)
+        self.assertEqual(tree_bytes(self.reg / "copies"), before_entry)
+
+    # -- final review findings ------------------------------------------------
+
+    def test_install_case_only_rename(self):
+        self.register()
+        git(self.up, "mv", "skills/sample/scripts/a.py", "skills/sample/scripts/A.py")
+        git(self.up, "commit", "-q", "-m", "rename to upper case")
+        new = git(self.up, "rev-parse", "HEAD").decode().strip()
+        self.verdict_for(new)
+        self.assertEqual(self.fk("reapply", *self.scratch_args()), 0, self.last)
+        self.assertEqual(self.fk("install", *self.scratch_args(), "--yes"), 0, self.last)
+        for target in (self.copy, self.install):
+            t = tree_bytes(target)
+            self.assertEqual(t.get("scripts/A.py"), b"print('a')\n", sorted(t))
+            self.assertNotIn("scripts/a.py", t)
+        self.assertEqual(self.fk("verify"), 0, self.last)
+
+    def test_install_flags_local_changes(self):
+        self.checked_with_verdict({"skills/sample/scripts/a.py": b"print('a2')\n"})
+        local = PATCHED.replace(b"line 7\n", b"line 7 edited by hand\n")
+        (self.install / "SKILL.md").write_bytes(local)
+        self.assertEqual(self.fk("reapply", *self.scratch_args()), 0, self.last)
+        self.assertEqual(self.fk("install", *self.scratch_args()), 3, self.last)
+        self.assertIn("LOCAL CHANGE", self.last)
+        self.assertIn("SKILL.md", self.last)
+        diff = (self.scratch / "fk-sample" / "install.diff").read_text(encoding="utf-8")
+        self.assertIn("-line 7 edited by hand", diff)
+        self.assertIn("+print('a2')", diff)
+        self.assertEqual((self.install / "SKILL.md").read_bytes(), local)
+
+    def test_record_verdict_needs_audit_record(self):
+        self.register()
+        self.upstream_change({"skills/sample/scripts/a.py": b"print('a2')\n"})
+        self.assertEqual(self.fk("check", *self.scratch_args()), 1, self.last)
+        self.assertEqual(self.fk("record-verdict", *self.scratch_args(), "--verdict", "LIKELY SAFE",
+                                 "--record", "sample", "--date", "2026-11-20"), 1, self.last)
+        self.assertIn("no audit record", self.last)
+        self.assertEqual(self.fk("reapply", *self.scratch_args()), 1, self.last)
+
+    def test_verify_reports_bytecode(self):
+        self.register()
+        write_files(self.install, {"scripts/__pycache__/a.cpython-312.pyc": b"\x00planted"})
+        self.assertEqual(self.fk("verify"), 1, self.last)
+        self.assertIn("bytecode", self.last)
+        self.assertIn("a.cpython-312.pyc", self.last)
+
+    def test_register_creates_missing_scratch(self):
+        missing = self.tmp / "not yet" / "scratch"
+        code = self.fk("register", "--draft", str(self.draft), "--scratch", str(missing),
+                       "--summary", "Patch line five")
+        self.assertEqual(code, 3, self.last)
+
+    def test_install_restores_on_unexpected_error(self):
+        self.checked_with_verdict({"skills/sample/scripts/a.py": b"print('a2')\n"})
+        self.assertEqual(self.fk("reapply", *self.scratch_args()), 0, self.last)
+        before_copy, before_install = tree_bytes(self.copy), tree_bytes(self.install)
+        before_entry = tree_bytes(self.reg / "copies")
+        real = fk._write_file
+
+        def failing(path, data):
+            if Path(path).name == "a.py" and Path(path).is_relative_to(self.install):
+                raise ValueError("unexpected (simulated)")
             real(path, data)
         fk._write_file = failing
         self.addCleanup(setattr, fk, "_write_file", real)

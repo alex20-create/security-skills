@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import argparse  # noqa: E402
 import dataclasses  # noqa: E402
 import datetime  # noqa: E402
+import difflib  # noqa: E402
 import json  # noqa: E402
 import os  # noqa: E402
 import re  # noqa: E402
@@ -221,7 +222,17 @@ def _locked_state(a, c):
     if verdict == "DO NOT INSTALL":
         raise Stop(DIFF, "the delta audit of {} at {} said DO NOT INSTALL; the update stops here".format(
             c.name, state["new"][:12]))
+    _require_record(_config(a), state.get("record"), state["new"])
     return state
+
+
+def _require_record(cfg, record, sha):
+    """The lock's second half: the audit records must hold this record at this commit."""
+    if not cfg.get("auditRecords"):
+        raise Stop(DIFF, "auditRecords is not set in fork-keeper.json; the audit lock needs it")
+    if not record or not _audited(_audit_text(cfg), record, sha):
+        raise Stop(DIFF, "no audit record for `{}` at {} in {}; write the audit entry first, then record the "
+                         "verdict".format(clean(record), sha[:7], cfg["auditRecords"]))
 
 
 def _emit(a, lines, data):
@@ -292,6 +303,7 @@ def cmd_register(a):
                     holder[key] = "0" * 40
     registry.parse_copy(probe, target)
 
+    Path(a.scratch).mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="fk-register-{}-".format(name), dir=a.scratch))
     gits = _resolve_pins(raw, work)
     c = registry.parse_copy(raw, target)
@@ -473,6 +485,7 @@ def cmd_record_verdict(a):
         ok = False
     if not ok:
         raise Stop(USAGE, "date must be YYYY-MM-DD")
+    _require_record(_config(a), a.record, state["new"])
     state.update({"verdict": a.verdict, "record": a.record, "date": a.date})
     _write_state(a, c, state)
     _emit(a, ["{} at {}: verdict {} recorded (scratch only)".format(c.name, state["new"][:12], a.verdict)],
@@ -524,6 +537,28 @@ def _changes(result_files, target, ignore):
     return current, add, change, delete
 
 
+def _content_diff(target, result, paths):
+    """Unified diff, target to result, of ``paths``; binary files are named, not shown."""
+    out = []
+    for rel in sorted(set(paths)):
+        old_p, new_p = Path(target) / rel, Path(result) / rel
+        old = old_p.read_bytes() if old_p.is_file() else b""
+        new = new_p.read_bytes() if new_p.is_file() else b""
+        try:
+            old_t, new_t = old.decode("utf-8"), new.decode("utf-8")
+            if "\x00" in old_t or "\x00" in new_t:
+                raise UnicodeDecodeError("utf-8", b"", 0, 1, "nul")
+        except UnicodeDecodeError:
+            out.append("Binary file {} differs ({} -> {} bytes)\n".format(clean(rel), len(old), len(new)))
+            continue
+        out += difflib.unified_diff(old_t.splitlines(keepends=True), new_t.splitlines(keepends=True),
+                                    "{}/{}".format(target, clean(rel)) if old_p.is_file() else "/dev/null",
+                                    "result/{}".format(clean(rel)) if new_p.is_file() else "/dev/null")
+        if out and not out[-1].endswith("\n"):
+            out.append("\n\\ No newline at end of file\n")
+    return out
+
+
 def cmd_install(a):
     c = _load(a, a.copy)
     cfg = _config(a)
@@ -536,13 +571,26 @@ def cmd_install(a):
     except reapply_mod.ReapplyError as e:
         raise Stop(DIFF, "nothing to install: {}".format(e))
     res_files = verify_mod.hash_tree(result, ignore)
+    manifest = registry.load_manifest(c.folder)
     targets = [Path(c.copy)] + [Path(i) for i in c.installs if not _same(i, c.copy)]
-    lines, plan = [], []
+    lines, plan, diff_text, local_any = [], [], [], False
     for t in targets:
         current, add, change, delete = _changes(res_files, t, ignore)
         plan.append((t, current))
+        drift = verify_mod.verify_tree(t, manifest, ignore)
         lines.append("{}: {} added, {} changed, {} deleted".format(t, len(add), len(change), len(delete)))
+        for kind in ("modified", "extra", "missing"):
+            for p in getattr(drift, kind):
+                local_any = True
+                lines.append("  ! LOCAL CHANGE ({} since the last install, not in any patch): {}".format(kind, clean(p)))
         lines += ["  + " + clean(p) for p in add] + ["  ~ " + clean(p) for p in change] + ["  - DELETE " + clean(p) for p in delete]
+        diff_text += _content_diff(t, result, add + change + delete)
+    if local_any:
+        lines.append("Local changes marked ! are overwritten or removed by this install; the backup in the scratch "
+                     "folder keeps them only until the next check.")
+    diff_path = work / "install.diff"
+    _write_file(diff_path, "".join(diff_text).encode("utf-8", "backslashreplace"))
+    lines.append("Content diff of every file above: {}".format(diff_path))
     lines.append("Registry: {} moves {} -> {}; patches regenerated; manifest rewritten".format(
         o.id, state["old"][:12], state["new"][:12]))
     if not a.yes:
@@ -561,15 +609,22 @@ def cmd_install(a):
     journal = []
     try:
         for n, (t, current) in enumerate(plan):
+            # Deletions first: on a case-insensitive disk "a.py" and "A.py" are one file, and a
+            # file may become a folder. Every step is journalled before it happens.
+            for rel in sorted(set(current) - set(res_files)):
+                journal.append((t / rel, backup / str(n) / rel))
+                (t / rel).unlink()
             for rel in sorted(res_files):
                 dst, data = t / rel, (result / rel).read_bytes()
                 if dst.is_file() and dst.read_bytes() == data:
                     continue
                 journal.append((dst, backup / str(n) / rel if rel in current else None))
                 _write_file(dst, data)
-            for rel in sorted(set(current) - set(res_files)):
-                journal.append((t / rel, backup / str(n) / rel))
-                (t / rel).unlink()
+            written = verify_mod.hash_tree(t, ignore)
+            if written != res_files:
+                wrong = sorted(set(written) ^ set(res_files) | {k for k in res_files if written.get(k) != res_files[k]})
+                raise RuntimeError("{} does not match the result after writing: {}".format(
+                    t, ", ".join(clean(p) for p in wrong[:10])))
         diffs = reapply_mod.per_patch_diffs(work / "work")
         for path, d in zip(registry.read_series(c.folder), diffs):
             h, _ = patches.parse(path.read_bytes())
@@ -582,7 +637,8 @@ def cmd_install(a):
                    for x in c.origins]
         registry.save_copy(dataclasses.replace(c, origins=origins))
         registry.save_manifest(c.folder, res_files, _today())
-    except (*_ERRORS, RegistryError) as e:
+    except BaseException as e:
+        # Any failure, of any type, puts every target and the registry entry back.
         for dst, src in reversed(journal):
             if src is not None:
                 dst.parent.mkdir(parents=True, exist_ok=True)
@@ -591,8 +647,11 @@ def cmd_install(a):
                 Path(dst).unlink(missing_ok=True)
         _rmtree(c.folder)
         shutil.copytree(backup / "registry", c.folder)
+        if not isinstance(e, Exception):
+            print("install interrupted; the copy, its installs and the registry entry were restored from {}".format(backup))
+            raise
         raise Stop(DIFF, "install failed ({}); the copy, its installs and the registry entry were restored "
-                         "from {}".format(e, backup))
+                         "from {}".format(clean(e), backup))
     state["installed"] = state["new"]
     _write_state(a, c, state)
     reg = _registry(a)
@@ -612,6 +671,7 @@ def cmd_install(a):
 
 def _rebuild(a, c, cfg):
     ignore = cfg.get("ignore", [])
+    Path(a.scratch).mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(prefix="fk-verify-{}-".format(c.name), dir=a.scratch))
     parts = [(o.id, _mirror_git(tmp, o, [o.pin]), o.pin, o.map) for o in c.origins]
     _build(tmp / "base", parts)
@@ -637,8 +697,11 @@ def cmd_verify(a):
             bad = bad or not r.ok
             rows.append({"copy": c.name, "path": str(t), **dataclasses.asdict(r)})
             lines.append("{}  {}  {}".format(c.name, t, "ok" if r.ok else "DIFFERS"))
-            for k in ("modified", "missing", "extra"):
+            for k in ("modified", "missing", "extra", "bytecode"):
                 lines += ["  {} {}".format(k, clean(p)) for p in getattr(r, k)]
+            if r.bytecode:
+                lines.append("  bytecode is a Python cache, or a planted file that runs in place of its source; "
+                             "deleting it is safe (Python rebuilds the cache)")
         if a.rebuild:
             problems = _rebuild(a, c, cfg)
             bad = bad or bool(problems)

@@ -96,13 +96,18 @@ python -I scripts/fk.py record-verdict --registry <reg> --copy <name> --scratch 
   --verdict "USE WITH CAUTION" --record <record name> --date 2026-01-15
 ```
 
-This writes `state.json` only. `install` later copies the verdict, record and
-date into `copy.json`.
+This writes `state.json` only, and only if the records file already holds a
+line with the record name in backticks and the new SHA's first seven
+characters. `install` later copies the verdict, record and date into
+`copy.json`.
 
 ## The lock
 
 - `register` refuses a pin with no audit record, or whose audit says
   `DO NOT INSTALL`.
+- `record-verdict` refuses a record that is not in the records file at the
+  new commit; `reapply` and `install` check that again, so removing the
+  entry later closes the lock.
 - `reapply` and `install` refuse while `state.json` has no verdict, and stop
   for good on `DO NOT INSTALL`.
 - `install` refuses while the re-apply is unfinished or has changes it did
@@ -149,19 +154,27 @@ python -I scripts/fk.py install --registry <reg> --copy <name> --scratch <dir> -
 - The plan lists, for `copy` and each install target, every file added,
   changed and deleted, then the registry change (the pin moving). Show the
   deletions explicitly.
+- Lines marked `! LOCAL CHANGE` are files that differ from the manifest of
+  the last install (modified, extra or missing) and that no patch carries.
+  The install overwrites or removes them; the user decides before `--yes`.
+- `<scratch>/fk-<copy>/install.diff` holds the content diff, target to
+  result, of every file in the plan (binary files are named, not shown).
 - With `--yes`:
   1. backs up every current file of each target, and the registry entry,
      into `<scratch>/fk-<copy>/backup/`;
-  2. writes the result into each target, keeping a journal of every file it
-     touches; files the ignore patterns cover (and a target's own `.git`)
-     are left alone;
+  2. for each target, deletes first and then writes, keeping a journal of
+     every file before it touches it, then checks that the target hashes to
+     the result; deleting first keeps a case-only rename (`a.py` to `A.py`)
+     intact on a case-insensitive disk. Files the ignore patterns cover (and
+     a target's own `.git`) are left alone;
   3. regenerates each patch as the diff between its consecutive commits in
      the work repository, with `Applies-To` at the new SHA and today as
      `Last-Update`; a patch that became empty is reported, not removed;
   4. updates `pin`, `audit` and `lastChecked` in `copy.json`, and rewrites
      `manifest.json`.
-- If any write fails, it undoes the journal from the backup, restores the
-  registry entry, says so and exits `1`.
+- If anything fails, of any kind (an interrupt included), it undoes the
+  journal from the backup, restores the registry entry and says so; a
+  failure exits `1`.
 - It ends by printing the commits to make in the registry, and in the copy's
   own repository if it has one. Run them only on a yes. Then remind the user
   how this copy is reinstalled (local map).
@@ -176,6 +189,12 @@ Fetches each origin at its pin into a fresh scratch folder, rebuilds the base,
 applies the series and compares the result with `manifest.json`. A plain
 `verify` trusts the manifest; this checks the manifest itself, so a hand-edited
 manifest cannot hide a change.
+
+Both report four kinds of difference: `modified`, `missing`, `extra` and
+`bytecode`. Manifests leave `__pycache__` out, but `verify` lists every
+bytecode file it finds: Python runs a cached file whose header matches its
+source, so a planted one would otherwise pass unseen. A cache Python wrote
+itself looks the same; deleting it is always safe.
 
 ## When something goes wrong
 

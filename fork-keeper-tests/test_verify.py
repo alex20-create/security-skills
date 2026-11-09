@@ -59,9 +59,17 @@ class VerifyTests(unittest.TestCase):
 
     def test_ignored_system_files(self):
         write_files(self.root, {"desktop.ini": b"x", "scripts/desktop.ini": b"x", "Thumbs.db": b"x",
-                                "scripts/__pycache__/x.pyc": b"x", ".DS_Store": b"x", "local.log": b"x",
-                                ".git/config": b"x"})
+                                ".DS_Store": b"x", "local.log": b"x", ".git/config": b"x"})
         self.assertTrue(verify.verify_tree(self.root, MANIFEST, ["*.log"]).ok)
+
+    def test_bytecode_reported_not_hashed(self):
+        write_files(self.root, {"scripts/__pycache__/x.cpython-312.pyc": b"x", "old.pyc": b"y",
+                                ".git/objects/z.pyc": b"z"})
+        r = verify.verify_tree(self.root, MANIFEST, [])
+        # A loose .pyc is not a cache folder, so it is also an extra file.
+        self.assertEqual((r.modified, r.missing, r.extra), ([], [], ["old.pyc"]))
+        self.assertEqual(r.bytecode, ["old.pyc", "scripts/__pycache__/x.cpython-312.pyc"])
+        self.assertFalse(r.ok)
 
     def test_folder_pattern_matches_folders_only(self):
         write_files(self.root, {"cache/x": b"x", "notes/cache": b"file named cache\n"})

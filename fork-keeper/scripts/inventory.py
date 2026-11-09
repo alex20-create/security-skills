@@ -103,7 +103,7 @@ def _skill(child, config, copies, audit, sources):
                 v.hit("green", "registered copy, matches its manifest")
             else:
                 v.hit("red", *["{}: {}".format(k, ", ".join(getattr(res, k)))
-                              for k in ("modified", "missing", "extra") if getattr(res, k)])
+                              for k in ("modified", "missing", "extra", "bytecode") if getattr(res, k)])
     elif name in sources:
         try:
             installed = hash_tree(child, ignore)

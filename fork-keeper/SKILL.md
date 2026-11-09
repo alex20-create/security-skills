@@ -53,21 +53,23 @@ python -I <this skill>/scripts/fk.py <command> --registry <registry folder> [opt
 
 - `-I` always: it stops a planted file next to the scripts from being
   imported.
-- `--scratch` is a new folder inside the session scratchpad. Everything
-  fetched from an original lands there and nowhere else.
+- `--scratch` is one folder inside the session scratchpad, created if
+  missing. Use the same folder for every step of one update: `check` keeps
+  the pending update there and `record-verdict`, `reapply` and `install` read
+  it. Everything fetched from an original lands there and nowhere else.
 - `--json` gives the same report as JSON when that is easier to read back.
 - Exit codes: `0` ok, `1` differences or a refusal (read the message), `2`
   usage or registry error, `3` a plan was printed and nothing was written.
 
 | Command | Network | Writes | Does |
 |---|---|---|---|
-| `register --draft <copy.json> --summary <text>` | yes, once | the registry, with `--yes` | Resolves short SHAs, checks the audit record, builds the base from the original, turns the copy's differences into one patch, writes the manifest |
+| `register --draft <copy.json> --summary <text> --scratch <dir>` | yes, once | the registry, with `--yes` | Resolves short SHAs, checks the audit record, builds the base from the original, turns the copy's differences into one patch, writes the manifest |
 | `status [--older-than N]` | no | nothing | Each copy and origin: pin, whether the pin has an audit record, days since the last check |
-| `check --copy <name> [--origin <id>] [--ref <ref>]` | yes | scratch only | Fetches the tracked ref, reports alarms, commits and the mapped diff, extracts the changed files for the audit |
+| `check --copy <name> --scratch <dir> [--origin <id>] [--ref <ref>]` | yes | scratch only | Fetches the tracked ref, reports alarms, commits and the mapped diff, extracts the changed files for the audit |
 | `mark-checked --copy <name> [--origin <id>]` | no | the registry, with `--yes` | Records today as the last check when nothing mapped changed |
-| `record-verdict --copy <name> --verdict <v> --record <name> --date <YYYY-MM-DD>` | no | scratch only | Stores the delta audit's verdict for the checked commit |
-| `reapply --copy <name> [--continue [--accept-empty]]` | no | scratch only | Applies the patch series on the new base, three-way, one patch at a time |
-| `install --copy <name>` | no | the copy, its installs and the registry, with `--yes` | Writes the approved result, moves the pin, regenerates patches and manifest |
+| `record-verdict --copy <name> --scratch <dir> --verdict <v> --record <name> --date <YYYY-MM-DD>` | no | scratch only | Stores the delta audit's verdict for the checked commit; refuses until the records file holds that record at the new commit |
+| `reapply --copy <name> --scratch <dir> [--continue [--accept-empty]]` | no | scratch only | Applies the patch series on the new base, three-way, one patch at a time |
+| `install --copy <name> --scratch <dir>` | no | the copy, its installs and the registry, with `--yes` | Writes the approved result, moves the pin, regenerates patches and manifest |
 | `verify [--copy <name>] [--rebuild --scratch <dir>]` | only with `--rebuild` | nothing | Hashes the copy and its installs against the manifest |
 | `inventory [--home <dir>]` | no | nothing | Lists installed skills, plugins and MCP servers by colour |
 
@@ -116,7 +118,7 @@ The full sequence, with what each step checks, is in
 4. **Audit record.** Draft the new entry in the user's own format (the local
    map, or the existing entries in the records file) and write it only on a
    yes. Then run `record-verdict` with the verdict, the record name and the
-   date.
+   date; it refuses until that entry, with the new commit, is in the file.
 5. **`DO NOT INSTALL` ends the update.** Tell the user why and stop; the
    copy stays at its current pin.
 6. **`reapply`.** Report each patch as `clean`, `merged` or `conflict`. For
@@ -125,8 +127,12 @@ The full sequence, with what each step checks, is in
    approves it. Then `reapply --continue`. If the right resolution is to drop
    the patch's change, use `--accept-empty` and say so.
 7. **`install`.** Show the plan (files added, changed and deleted per
-   target), then run it with `--yes`. If a write fails it restores the copy,
-   its installs and the registry entry from the backup and says so.
+   target) and point to `install.diff`, the content diff it writes. Lines
+   marked `! LOCAL CHANGE` are edits made in a target since the last install
+   that no patch carries: the install overwrites them. Say so plainly and let
+   the user decide before anything is written. Then run it with `--yes`. If
+   anything fails it restores the copy, its installs and the registry entry
+   from the backup and says so.
 8. **Afterwards.** Offer the printed commits, and remind the user how the
    copy is reinstalled (local map), for example rebuilding a package.
 
@@ -134,7 +140,10 @@ The full sequence, with what each step checks, is in
 
 - `verify` is offline and cheap: offer it whenever the user doubts a copy.
   An **extra** file matters most, since that is how something slipped into
-  a skill would show. `verify --rebuild` fetches the originals and checks
+  a skill would show. **Bytecode** (`__pycache__`, `.pyc`) is listed apart:
+  usually a cache Python wrote when the skill ran, but a planted one runs in
+  place of its source while the source still matches. Offer to delete it;
+  that is always safe. `verify --rebuild` fetches the originals and checks
   that the manifest itself is right.
 - `inventory` reads the skills folders, the plugin list and the MCP server
   entries. Red means third-party with nothing behind it or a failed check;

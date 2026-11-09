@@ -2,9 +2,17 @@
 
 The walk is the one patches use: the default ignore patterns (system files
 such as desktop.ini) plus the caller's, ``.git`` skipped, links refused.
+
+Python bytecode is the exception. ``__pycache__`` stays out of manifests and
+patches, but ``verify`` lists every ``.pyc`` or ``.pyo`` file and every file
+inside a ``__pycache__`` folder as ``bytecode``: Python loads a cached file
+whose header matches its source, so a planted one runs while the source and
+the manifest still agree. A cache Python wrote itself looks the same, which
+is why it is reported rather than judged; deleting it is always safe.
 """
 
 import hashlib
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -22,10 +30,11 @@ class VerifyResult:
     modified: list = field(default_factory=list)
     missing: list = field(default_factory=list)
     extra: list = field(default_factory=list)
+    bytecode: list = field(default_factory=list)
 
     @property
     def ok(self):
-        return not (self.modified or self.missing or self.extra)
+        return not (self.modified or self.missing or self.extra or self.bytecode)
 
 
 def _sha256(path):
@@ -47,10 +56,24 @@ def hash_tree(root, ignore):
     return {rel: _sha256(root / rel) for rel in files}
 
 
+def bytecode_files(root):
+    """Every Python bytecode file under ``root`` (``.git`` skipped), as sorted relative paths."""
+    root = Path(root)
+    out = []
+    for folder, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d.casefold() != ".git"]
+        cache = Path(folder).name.casefold() == "__pycache__"
+        for name in files:
+            if cache or name.casefold().endswith((".pyc", ".pyo")):
+                out.append((Path(folder) / name).relative_to(root).as_posix())
+    return sorted(out)
+
+
 def verify_tree(root, manifest, ignore):
     actual = hash_tree(root, ignore)
     return VerifyResult(
         modified=sorted(p for p in manifest if p in actual and actual[p] != manifest[p]),
         missing=sorted(p for p in manifest if p not in actual),
         extra=sorted(p for p in actual if p not in manifest),
+        bytecode=bytecode_files(root) if Path(root).is_dir() else [],
     )
