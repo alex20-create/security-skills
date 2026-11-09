@@ -1,17 +1,6 @@
 ---
 name: vet-before-install
-description: "Security-audit anything before trusting or installing it: an
-agent skill or plugin, a GitHub repo, a local project, an MCP server, or its
-dependencies. Enforces a two-stage discipline — deterministic sweep for
-recall, then a manual contract check for judgment — and works with zero
-dependencies: it uses installed security tools when present (a skill
-scanner, insecure-defaults, supply-chain or context-building auditors) and
-falls back to built-in procedures otherwise, and offers any other installed
-security skills as optional extra passes. Use whenever the user says
-'audit this', 'is this safe to install?', '¿es seguro?', passes a GitHub URL
-or local path asking for a security review, or wants to vet a skill, plugin,
-MCP server, or third-party project before installing or running it. Not for
-reviewing the user's own diffs or PRs — code review tools cover that."
+description: "Security-audit anything before trusting or installing it: an agent skill or plugin, a GitHub repo, a local project, an MCP server, or its dependencies. Enforces a two-stage discipline — deterministic sweep for recall, then a manual contract check for judgment — and works with zero dependencies: it uses installed security tools when present (a skill scanner, insecure-defaults, supply-chain or context-building auditors) and falls back to built-in procedures otherwise, and offers any other installed security skills as optional extra passes. Use whenever the user says 'audit this', 'is this safe to install?', '¿es seguro?', passes a GitHub URL or local path asking for a security review, or wants to vet a skill, plugin, MCP server, or third-party project before installing or running it. Not for reviewing the user's own diffs or PRs — code review tools cover that."
 ---
 
 # Vet before install
