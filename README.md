@@ -60,6 +60,14 @@ If you also have a dedicated skill-audit scanner installed (one that runs a
 deterministic regex/AST/YARA pass over a skill folder), the skill hands the
 skill/plugin case to it end to end.
 
+Any other security tooling you have installed (a code security reviewer, a
+multi-agent vulnerability scanner, a secrets scanner, a security subagent)
+is offered as an optional extra pass: the skill lists what it found in one
+multi-select question, with what each would add and its rough cost, and runs
+only what you pick. Extra tools run read-only on the isolated copy, never
+install, build, run or edit the target, and their findings go through the
+same contract check; the verdict stays this skill's.
+
 ## Usage
 
 Just ask, in any phrasing:
