@@ -120,6 +120,13 @@ class TreeTests(unittest.TestCase):
             tree.build_base([("upstream", self.git, self.sha, [MapEntry("LICENSE", "../outside")])], self.dest)
         self.assertFalse((self.root / "outside").exists())
 
+    def test_unsafe_component_names(self):
+        for bad in ("a\\b", "..", "x/../y", ".git/config", "GIT~1/hooks", "x:y", "trail.", "trail ", "CON", "nul.txt", "com1"):
+            with self.subTest(path=bad):
+                with self.assertRaises(TreeError):
+                    tree.check_path_safe(bad, "test")
+        self.assertEqual(tree.check_path_safe("ok/name.md", "test"), "ok/name.md")
+
     def test_prefix_is_not_a_folder_match(self):
         make_repo(self.up, {"skills/xy/other.md": b"o\n"}, "sibling")
         sha = git(self.up, "rev-parse", "HEAD").decode().strip()

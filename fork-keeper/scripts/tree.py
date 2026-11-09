@@ -5,7 +5,7 @@ submodules inside a mapped path are refused, never followed, and no file is
 written outside the destination folder.
 """
 
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 _SYMLINK = "120000"
 _GITLINK = "160000"
@@ -16,11 +16,17 @@ class TreeError(Exception):
     pass
 
 
-def _check_component_safe(path, where):
-    parts = PurePosixPath(path).parts
-    for p in parts:
-        if p in ("", ".", "..") or p.lower() == ".git" or any(c in _WINDOWS_BAD or ord(c) < 32 for c in p) \
-                or p.endswith((" ", ".")):
+_RESERVED = {"con", "prn", "aux", "nul"} | {"{}{}".format(d, n) for d in ("com", "lpt") for n in range(1, 10)}
+
+
+def check_path_safe(path, where):
+    """Refuse a relative path that could escape, reach git's own folder or misbehave on Windows."""
+    if not path or path.startswith("/") or "//" in path:
+        raise TreeError("{}: unsafe path {!r}".format(where, path))
+    for p in path.split("/"):
+        low = p.casefold()
+        if p in ("", ".", "..") or low in (".git", "git~1") or low.split(".", 1)[0] in _RESERVED \
+                or any(c in _WINDOWS_BAD or ord(c) < 32 for c in p) or p.endswith((" ", ".")):
             raise TreeError("{}: unsafe path {!r}".format(where, path))
     return path
 
@@ -50,7 +56,7 @@ def mapped_files(git, commit, entries):
             if mode == _GITLINK:
                 raise TreeError("{} is a submodule at {}; fork-keeper does not follow submodules".format(src, commit[:12]))
             dst = e.dst if rel is None else _join(e.dst, rel)
-            _check_component_safe(dst, "destination of " + src)
+            check_path_safe(dst, "destination of " + src)
             out[dst] = (src, blob)
     return out
 
