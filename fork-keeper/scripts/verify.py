@@ -5,7 +5,8 @@ such as desktop.ini) plus the caller's, ``.git`` skipped, links refused.
 
 Python bytecode is the exception. ``__pycache__`` stays out of manifests and
 patches, but ``verify`` lists every ``.pyc`` or ``.pyo`` file and every file
-inside a ``__pycache__`` folder as ``bytecode``: Python loads a cached file
+inside a ``__pycache__`` folder (outside ignored folders, links never
+entered) as ``bytecode``: Python loads a cached file
 whose header matches its source, so a planted one runs while the source and
 the manifest still agree. A cache Python wrote itself looks the same, which
 is why it is reported rather than judged; deleting it is always safe.
@@ -16,7 +17,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from patches import PatchError, walk_files
+from patches import PatchError, _ignored, walk_files
+from registry import DEFAULT_IGNORE
 
 _CHUNK = 1 << 20
 
@@ -56,16 +58,30 @@ def hash_tree(root, ignore):
     return {rel: _sha256(root / rel) for rel in files}
 
 
-def bytecode_files(root):
-    """Every Python bytecode file under ``root`` (``.git`` skipped), as sorted relative paths."""
+def _is_link(path):
+    return path.is_symlink() or getattr(os.path, "isjunction", lambda _: False)(path)
+
+
+def bytecode_files(root, ignore=()):
+    """Every Python bytecode file under ``root``, as sorted relative paths.
+
+    Folders are pruned as ``walk_files`` prunes them (``.git``, the default
+    and caller's ignore patterns) and links are never entered, except that a
+    ``__pycache__`` folder is always searched: that is where bytecode lives.
+    """
     root = Path(root)
+    patterns = list(DEFAULT_IGNORE) + list(ignore)
     out = []
-    for folder, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d.casefold() != ".git"]
-        cache = Path(folder).name.casefold() == "__pycache__"
+    for folder, dirs, files in os.walk(root, followlinks=False):
+        here = Path(folder)
+        dirs[:] = [d for d in dirs
+                   if not _is_link(here / d)
+                   and d.casefold() != ".git"
+                   and (d.casefold() == "__pycache__" or not _ignored(d, True, patterns))]
+        cache = here.name.casefold() == "__pycache__"
         for name in files:
             if cache or name.casefold().endswith((".pyc", ".pyo")):
-                out.append((Path(folder) / name).relative_to(root).as_posix())
+                out.append((here / name).relative_to(root).as_posix())
     return sorted(out)
 
 
@@ -75,5 +91,5 @@ def verify_tree(root, manifest, ignore):
         modified=sorted(p for p in manifest if p in actual and actual[p] != manifest[p]),
         missing=sorted(p for p in manifest if p not in actual),
         extra=sorted(p for p in actual if p not in manifest),
-        bytecode=bytecode_files(root) if Path(root).is_dir() else [],
+        bytecode=bytecode_files(root, ignore) if Path(root).is_dir() else [],
     )

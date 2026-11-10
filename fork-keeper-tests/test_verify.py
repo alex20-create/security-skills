@@ -71,6 +71,46 @@ class VerifyTests(unittest.TestCase):
         self.assertEqual(r.bytecode, ["old.pyc", "scripts/__pycache__/x.cpython-312.pyc"])
         self.assertFalse(r.ok)
 
+    def test_bytecode_in_ignored_folder_not_reported(self):
+        write_files(self.root, {"deps/pkg/x.pyc": b"x", "deps/pkg/__pycache__/y.cpython-312.pyc": b"y"})
+        r = verify.verify_tree(self.root, MANIFEST, ["deps/"])
+        self.assertEqual(r.bytecode, [])
+        self.assertTrue(r.ok)
+
+    def test_bytecode_ignore_pattern_does_not_hide_cache(self):
+        # __pycache__ is ignored for hashing by default; naming it again must not hide it here.
+        write_files(self.root, {"scripts/__pycache__/x.cpython-312.pyc": b"x"})
+        r = verify.verify_tree(self.root, MANIFEST, ["__pycache__/"])
+        self.assertEqual(r.bytecode, ["scripts/__pycache__/x.cpython-312.pyc"])
+
+    def _dir_link(self, target, link):
+        """A junction on Windows, a symlink elsewhere; skip the test when neither can be made."""
+        if os.name == "nt":
+            import _winapi
+            try:
+                _winapi.CreateJunction(str(target), str(link))
+                return
+            except OSError:
+                pass
+        try:
+            os.symlink(target, link, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("this system cannot create directory links without extra rights")
+
+    def test_bytecode_walk_does_not_follow_dir_links(self):
+        outside = self.root.parent / "outside"
+        write_files(outside, {"z.pyc": b"z", "__pycache__/w.cpython-312.pyc": b"w"})
+        self._dir_link(outside, self.root / "linked")
+        self.assertEqual(verify.bytecode_files(self.root, []), [])
+
+    def test_dir_link_inside_ignored_folder(self):
+        outside = self.root.parent / "outside"
+        write_files(outside, {"z.pyc": b"z"})
+        (self.root / "deps").mkdir()
+        self._dir_link(outside, self.root / "deps" / "linked")
+        r = verify.verify_tree(self.root, MANIFEST, ["deps/"])
+        self.assertEqual(r, VerifyResult([], [], [], []))
+
     def test_folder_pattern_matches_folders_only(self):
         write_files(self.root, {"cache/x": b"x", "notes/cache": b"file named cache\n"})
         r = verify.verify_tree(self.root, MANIFEST, ["cache/"])
