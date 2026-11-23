@@ -25,9 +25,13 @@ back on top, with the user approving each write.
 
 ## Local map first
 
-Before anything else, look for a section named `fork-keeper local map` in the
-user's standing instructions (their `CLAUDE.md` files, read from disk). It
-says:
+Before anything else, look for this skill's local map: a file of the user's
+own, kept outside this skill's folder, that their standing instructions
+point to (their `CLAUDE.md` files, read from disk). They either name the
+folder where local maps are kept, and the map is `fork-keeper.md` in it, or
+carry a section named `fork-keeper local map` that points to the file or,
+in an older setup, holds the map itself. Read the file in full; if the
+pointer leads to no file, say so and go on as with no map. It says:
 
 - where the registry folder lives;
 - where the audit records are kept and the format of an entry;
